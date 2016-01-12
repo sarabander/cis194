@@ -7,6 +7,8 @@
    GNU General Public License, version 3. -}
 
 
+module Main where
+
 import Text.ParserCombinators.Parsec hiding ((<|>), many)
 import Control.Applicative
 
@@ -66,12 +68,12 @@ special = (Special . (:[])) <$> oneOf "%$"
 -------------------------------
 atClause :: Parser TexiFragment
 atClause = (*>) (char '@') $
-           tryWith (\p -> Single  <$>  p)                   singleTags  <|>
-           tryWith (\p -> Empty   <$>  p <*  string "{}")   emptyTags   <|>
            tryWith (\p -> Braced  <$>  p <*> bracedArg)     bracedTags  <|>
            tryWith (\p -> Math    <$> (p  *> mathArg "{}")) mathTags    <|>
            tryWith (\p -> Line    <$>  p <*> lineArg)       lineTags    <|>
+           tryWith (\p -> Single  <$>  p)                   singleTags  <|>
            tryWith (\p -> Comment <$> (p  *> commentArg))   commentTags <|>
+           tryWith (\p -> Empty   <$>  p <*  string "{}")   emptyTags   <|>
            try ((\(t, a) -> Env t a) <$> env envTags texiFragment)      <|>
            try ((\(_, a) -> TeX a)   <$> env texTags anyChar)
 
@@ -136,19 +138,19 @@ endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 -- Lists of tags in each category
 ----------------------------------
 singleTags :: [Tag]
-singleTags = map (:[]) "-/`^\"{}@*'|," ++ words "short thispage"
+singleTags = map (:[]) "/-`^\"{}@*'|," ++ words "short thispage"
 
 emptyTags :: [Tag]
 emptyTags = words "TeX copyright dots"
 
 bracedTags :: [Tag]
-bracedTags = words "acronym anchor b cite code dfn emph file footnote i image newterm r ref strong t titlefont url value var w"
+bracedTags = words "code ref anchor strong newterm footnote i acronym var r b cite emph image url w value dfn file t titlefont"
 
 mathTags :: [Tag]
 mathTags = words "math"
 
 lineTags :: [Tag]
-lineTags = words "author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include item node noindent printindex section setfilename setshortcontentsaftertitlepage settitle set sp subsection subsubheading subsubsection subtitle title unnumbered"
+lineTags = words "noindent sp item subsubheading author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include node printindex section setfilename setshortcontentsaftertitlepage settitle set subsection subsubsection subtitle title unnumbered"
 
 commentTags :: [Tag]
 commentTags = words "c comment"
