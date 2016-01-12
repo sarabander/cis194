@@ -16,13 +16,15 @@ import Control.Applicative
 ----------------------
 type Texinfo = [TexiFragment]
 
-type Tag = String
-type EndTag = String
-type Text = String
-type Symbol = String
-type ExcludedChars = String
-type Expression = String
-type Markup = String
+type Textual = String -- could be Text instead
+
+type Tag = Textual
+type EndTag = Textual
+type Text = Textual
+type Symbol = Textual
+type ExcludedChars = Textual
+type Expression = Textual
+type Markup = Textual
 
 data TexiFragment = Void
                   | Comment Text
