@@ -9,29 +9,29 @@
 
 module Main where
 
-import Text.ParserCombinators.Parsec hiding ((<|>), many)
-import Control.Applicative
+import Text.Parsec
+import Text.Parsec.Text
+import Control.Applicative hiding (many, (<|>))
+import qualified Data.Text as T
+import qualified Data.Text.IO as Tio
 
 -- Texinfo data types
 ----------------------
 type Texinfo = [TexiFragment]
 
-type Textual = String -- could be Text instead
-
-type Tag = Textual
-type EndTag = Textual
-type Text = Textual
-type Symbol = Textual
-type ExcludedChars = Textual
-type Expression = Textual
-type Markup = Textual
+type Tag = String
+type EndTag = String
+type Symbol = String
+type ExcludedChars = String
+type Expression = String
+type Markup = String
 
 data TexiFragment = Void
-                  | Comment Text
-                  | Plain Text
+                  | Comment String
+                  | Plain String
                   | Special Symbol
                   | Single Tag
-                  | Empty Tag
+                  | NoArg Tag
                   | Braced Tag Texinfo
                   | Math Expression
                   | Line Tag Texinfo
@@ -52,11 +52,11 @@ texiFragment = plainText <|> atClause <|> special
 plainText :: Parser TexiFragment
 plainText = Plain <$> simpleText "@{}%$"
                
-simpleText :: ExcludedChars -> Parser Text
+simpleText :: ExcludedChars -> Parser String
 simpleText excl = concat <$>
                   many1 (nestedBraces excl <|> many1 (noneOf excl))
 
-nestedBraces :: ExcludedChars -> Parser Text
+nestedBraces :: ExcludedChars -> Parser String
 nestedBraces excl = try (string "{}") <|>
                     (\x y z -> x ++ y ++ z) <$>
                     string "{" <*> simpleText excl <*> string "}"
@@ -64,7 +64,7 @@ nestedBraces excl = try (string "{}") <|>
 -- Special symbol ('%' or '$')
 -------------------------------
 special :: Parser TexiFragment
-special = (Special . (:[])) <$> oneOf "%$" 
+special = (Special . (:[])) <$> oneOf "%$"
 
 -- A clause beginning with '@'
 -------------------------------
@@ -75,7 +75,7 @@ atClause = (*>) (char '@') $
            tryWith (\p -> Line    <$>  p <*> lineArg)       lineTags    <|>
            tryWith (\p -> Single  <$>  p)                   singleTags  <|>
            tryWith (\p -> Comment <$> (p  *> commentArg))   commentTags <|>
-           tryWith (\p -> Empty   <$>  p <*  string "{}")   emptyTags   <|>
+           tryWith (\p -> NoArg   <$>  p <*  string "{}")   emptyTags   <|>
            try ((\(t, a) -> Env t a) <$> env envTags texiFragment)      <|>
            try ((\(_, a) -> TeX a)   <$> env texTags anyChar)
 
@@ -85,13 +85,13 @@ tryWith transform = choice . map (try . transform . string)
 bracedArg :: Parser Texinfo
 bracedArg = char '{' *> texinfo <* char '}'
 
-mathArg :: ExcludedChars -> Parser Text
+mathArg :: ExcludedChars -> Parser String
 mathArg excl = char '{' *> simpleText excl <* char '}'
 
 -- Special treatment of fragments inside one-line arguments
 -- (newline is not allowed)
 ------------------------------------------------------------
-emptyLine :: Parser Text
+emptyLine :: Parser String
 emptyLine = manyTill space (newline <|> eof *> pure ' ')
 
 void :: Parser Texinfo
@@ -108,13 +108,13 @@ oneLiner = Plain <$> simpleText "@{}%$\n"                                 <|>
            special                                                        <|>
            (char '@') *>
            (tryWith (\p -> Single  <$> p)                      singleTags <|>
-            tryWith (\p -> Empty   <$> p <* string "{}")       emptyTags  <|>
+            tryWith (\p -> NoArg   <$> p <* string "{}")       emptyTags  <|>
             tryWith (\p -> Braced  <$> p <*>
              (char '{' *> many oneLiner <* char '}'))          bracedTags <|>
             tryWith (\p -> Math    <$> (p *> mathArg "{}\n"))  mathTags   <|>
             tryWith (\p -> Comment <$> (p *> notEOL))          commentTags)
 
-notEOL :: Parser Text
+notEOL :: Parser String
 notEOL = option "" $ many1 (char ' ') *> many (noneOf "\n")
 
 lineArg :: Parser Texinfo
@@ -122,7 +122,7 @@ lineArg = void `orMany` oneLiner
 
 -- Comment line argument should be left as it is
 -------------------------------------------------
-commentArg :: Parser Text
+commentArg :: Parser String
 commentArg = emptyLine `orMany` noneOf "\n"
 
 -- Environments
@@ -166,7 +166,11 @@ texTags = words "tex"
 -- Read the Texinfo source from file
 -------------------------------------
 main :: IO ()
-main = do
-  result <- parseFromFile texinfo "sicp.texi"
-  writeFile "parsed-sicp.txt" $ show result
-  --print result
+main = Tio.readFile infile >>=
+       Tio.writeFile outfile . T.pack . show . parse texinfo infile
+
+infile :: String
+infile = "sicp.texi"
+
+outfile :: String
+outfile = "parsed-sicp.txt"
