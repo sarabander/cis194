@@ -9,7 +9,8 @@
 
 module Main where
 
-import Text.ParserCombinators.Parsec hiding ((<|>), many)
+import Text.Megaparsec hiding ((<|>), many)
+import Text.Megaparsec.String 
 import Control.Applicative
 
 -- Texinfo data types
@@ -54,7 +55,7 @@ plainText = Plain <$> simpleText "@{}%$"
                
 simpleText :: ExcludedChars -> Parser Text
 simpleText excl = concat <$>
-                  many1 (nestedBraces excl <|> many1 (noneOf excl))
+                  some (nestedBraces excl <|> some (noneOf excl))
 
 nestedBraces :: ExcludedChars -> Parser Text
 nestedBraces excl = try (string "{}") <|>
@@ -92,13 +93,13 @@ mathArg excl = char '{' *> simpleText excl <* char '}'
 -- (newline is not allowed)
 ------------------------------------------------------------
 emptyLine :: Parser Text
-emptyLine = manyTill space (newline <|> eof *> pure ' ')
+emptyLine = manyTill spaceChar (newline <|> eof *> pure ' ')
 
 void :: Parser Texinfo
 void = emptyLine *> pure [Void]
 
 orMany :: Parser [a] -> Parser a -> Parser [a]
-vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
+vp `orMany` p = try vp <|> spaceChar *> {- space *> -} manyTill p newline
 -- vp is void-parser or empty-line parser, p should match something else
 infixl 3 `orMany`
 
@@ -115,7 +116,7 @@ oneLiner = Plain <$> simpleText "@{}%$\n"                                 <|>
             tryWith (\p -> Comment <$> (p *> notEOL))          commentTags)
 
 notEOL :: Parser Text
-notEOL = option "" $ many1 (char ' ') *> many (noneOf "\n")
+notEOL = option "" $ some (char ' ') *> many (noneOf "\n")
 
 lineArg :: Parser Texinfo
 lineArg = void `orMany` oneLiner
@@ -131,11 +132,11 @@ env :: [Tag] -> Parser a -> Parser (Tag, [a])
 env tags p = choice $ map (envSelect p) tags
 
 envSelect :: Parser a -> Tag -> Parser (Tag, [a])
-envSelect p tag = (,) <$> (try . string) tag <* spaces {- <* emptyLine -} <*>
+envSelect p tag = (,) <$> (try . string) tag <* space {- <* emptyLine -} <*>
                 (manyTill p $ endTag tag)
 
 endTag :: Tag -> Parser EndTag
-endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
+endTag tag = try $ string "@end " <* space <* string tag {- <* emptyLine -}
 
 -- Lists of tags in each category
 ----------------------------------
