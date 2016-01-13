@@ -9,7 +9,8 @@
 
 module Main where
 
-import Text.ParserCombinators.Parsec hiding ((<|>), many)
+import Text.Parsec hiding ((<|>), many)
+import Text.Parsec.String 
 import Control.Applicative
 
 -- Texinfo data types
@@ -29,7 +30,7 @@ data TexiFragment = Void
                   | Plain Text
                   | Special Symbol
                   | Single Tag
-                  | Empty Tag
+                  | NoArg Tag
                   | Braced Tag Texinfo
                   | Math Expression
                   | Line Tag Texinfo
@@ -73,7 +74,7 @@ atClause = (*>) (char '@') $
            tryWith (\p -> Line    <$>  p <*> lineArg)       lineTags    <|>
            tryWith (\p -> Single  <$>  p)                   singleTags  <|>
            tryWith (\p -> Comment <$> (p  *> commentArg))   commentTags <|>
-           tryWith (\p -> Empty   <$>  p <*  string "{}")   emptyTags   <|>
+           tryWith (\p -> NoArg   <$>  p <*  string "{}")   emptyTags   <|>
            try ((\(t, a) -> Env t a) <$> env envTags texiFragment)      <|>
            try ((\(_, a) -> TeX a)   <$> env texTags anyChar)
 
@@ -106,7 +107,7 @@ oneLiner = Plain <$> simpleText "@{}%$\n"                                 <|>
            special                                                        <|>
            (char '@') *>
            (tryWith (\p -> Single  <$> p)                      singleTags <|>
-            tryWith (\p -> Empty   <$> p <* string "{}")       emptyTags  <|>
+            tryWith (\p -> NoArg   <$> p <* string "{}")       emptyTags  <|>
             tryWith (\p -> Braced  <$> p <*>
              (char '{' *> many oneLiner <* char '}'))          bracedTags <|>
             tryWith (\p -> Math    <$> (p *> mathArg "{}\n"))  mathTags   <|>
