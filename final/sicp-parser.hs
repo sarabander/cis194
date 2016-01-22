@@ -166,6 +166,28 @@ texTags = words "tex"
 -------------------------------------
 main :: IO ()
 main = do
-  result <- parseFromFile texinfo "sicp.texi"
-  writeFile "parsed-sicp.txt" $ show result
+  parseTree <- parseFromFile texinfo "sicp.texi"
+  let translated = either show id $ fmap trTexinfo parseTree
+  --writeFile "parsed-sicp.txt" $ show parseTree
+  writeFile "parsed-sicp.txt" $ translated
   --print result
+
+-- Translate the parse tree to LaTeX
+-------------------------------------
+trTexinfo :: Texinfo -> String
+trTexinfo  = concat . map trTexiFragment
+
+trTexiFragment :: TexiFragment -> String
+trTexiFragment fr = case fr of
+  Void -> ""
+  Comment text -> "% " ++ text ++ "\n"
+  Plain text -> text
+  Special symbol -> symbol
+  Single tag -> tag
+  NoArg tag -> tag
+  Braced _ texi -> trTexinfo texi
+  Math expr -> expr
+  Line _ texi -> trTexinfo texi ++ "\n"
+  Env _ texi -> trTexinfo texi
+  TeX markup -> markup
+
