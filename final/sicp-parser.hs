@@ -12,6 +12,7 @@ module Main where
 import Text.Parsec hiding ((<|>), many)
 import Text.Parsec.String 
 import Control.Applicative
+import qualified Data.Map as M
 
 -- Texinfo data types
 ----------------------
@@ -24,8 +25,12 @@ type Symbol = String
 type ExcludedChars = String
 type Expression = String
 type Markup = String
-type Context = String
 type LaTeX = String
+
+type Context = String  -- if we are inside @code{..}, then context is "code"
+type Variable = String -- a variable defined with @set <variable> <value>
+type Value = String    -- a value of the variable assigned with @set
+type Environment = (Context, M.Map Variable Value)
 
 data TexiFragment = Void
                   | Comment Text
@@ -172,28 +177,29 @@ texTags = words "tex"
 main :: IO ()
 main = do
   parseTree <- parseFromFile texinfo "sicp.texi"
-  let translated = either show id $ fmap (trTexinfo "global") parseTree
+  let translated = either show id $
+                   fmap (trTexinfo ("global", M.empty)) parseTree
   --writeFile "parsed-sicp.txt" $ show parseTree
   writeFile "parsed-sicp.txt" $ translated
   --print result
 
 -- Translate the Texinfo parse tree to LaTeX
 ---------------------------------------------
-trTexinfo :: Context -> Texinfo -> LaTeX
-trTexinfo context = concat . map (trTexiFragment context)
+trTexinfo :: Environment -> Texinfo -> LaTeX
+trTexinfo e = concat . map (trTexiFragment e)
 
-trTexiFragment :: Context -> TexiFragment -> LaTeX
-trTexiFragment context fr = case fr of
+trTexiFragment :: Environment -> TexiFragment -> LaTeX
+trTexiFragment e fr = case fr of
   Void -> ""
   Comment text -> "% " ++ text ++ "\n"
   Plain text -> text
   Special symbol -> "\\" ++ symbol
   Single tag -> single tag
   NoArg tag -> noArg tag
-  Braced tag texi -> braced tag $ trTexinfo tag texi
-  Math expr -> inlineMath context expr
-  Line tag texi -> trTexinfo tag texi ++ "\n"
-  Env tag texi -> trTexinfo tag texi
+  Braced tag texi -> braced tag $ trTexinfo (tag, snd e) texi
+  Math expr -> inlineMath (fst e) expr
+  Line tag texi -> trTexinfo (tag, snd e) texi ++ "\n"
+  Env tag texi -> trTexinfo (tag, snd e) texi
   TeX markup -> markup
 
 single :: Tag -> LaTeX
