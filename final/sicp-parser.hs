@@ -24,6 +24,8 @@ type Symbol = String
 type ExcludedChars = String
 type Expression = String
 type Markup = String
+type Context = String
+type LaTeX = String
 
 data TexiFragment = Void
                   | Comment Text
@@ -49,7 +51,7 @@ texiFragment = plainText <|> atClause <|> special
 -- Plaintext fragment that doesn't contain @-clauses or special symbols
 ------------------------------------------------------------------------
 plainText :: Parser TexiFragment
-plainText = Plain <$> simpleText "@{}%$"
+plainText = Plain <$> simpleText ("@{}" ++ specialSymbols)
                
 simpleText :: ExcludedChars -> Parser Text
 simpleText excl = concat <$>
@@ -60,10 +62,10 @@ nestedBraces excl = try (string "{}") <|>
                     (\x y z -> x ++ y ++ z) <$>
                     string "{" <*> simpleText excl <*> string "}"
 
--- Special symbol ('%' or '$')
--------------------------------
+-- Special symbol
+------------------
 special :: Parser TexiFragment
-special = (Special . (:[])) <$> oneOf "%$" 
+special = (Special . (:[])) <$> oneOf specialSymbols
 
 -- A clause beginning with '@'
 -------------------------------
@@ -103,7 +105,7 @@ infixl 3 `orMany`
 
 -- Line arguments should not contain line-clauses nor multiline environments
 oneLiner :: Parser TexiFragment
-oneLiner = Plain <$> simpleText "@{}%$\n"                                 <|>
+oneLiner = Plain <$> simpleText ("@{}\n" ++ specialSymbols)               <|>
            special                                                        <|>
            (char '@') *>
            (tryWith (\p -> Single  <$> p)                      singleTags <|>
@@ -138,6 +140,9 @@ endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
 -- Lists of tags in each category
 ----------------------------------
+specialSymbols :: String
+specialSymbols = "%$"
+
 singleTags :: [Tag]
 singleTags = map (:[]) "/-`^\"{}@*'|," ++ words "short thispage"
 
@@ -167,27 +172,107 @@ texTags = words "tex"
 main :: IO ()
 main = do
   parseTree <- parseFromFile texinfo "sicp.texi"
-  let translated = either show id $ fmap trTexinfo parseTree
+  let translated = either show id $ fmap (trTexinfo "global") parseTree
   --writeFile "parsed-sicp.txt" $ show parseTree
   writeFile "parsed-sicp.txt" $ translated
   --print result
 
--- Translate the parse tree to LaTeX
--------------------------------------
-trTexinfo :: Texinfo -> String
-trTexinfo  = concat . map trTexiFragment
+-- Translate the Texinfo parse tree to LaTeX
+---------------------------------------------
+trTexinfo :: Context -> Texinfo -> LaTeX
+trTexinfo context = concat . map (trTexiFragment context)
 
-trTexiFragment :: TexiFragment -> String
-trTexiFragment fr = case fr of
+trTexiFragment :: Context -> TexiFragment -> LaTeX
+trTexiFragment context fr = case fr of
   Void -> ""
   Comment text -> "% " ++ text ++ "\n"
   Plain text -> text
-  Special symbol -> symbol
-  Single tag -> tag
-  NoArg tag -> tag
-  Braced _ texi -> trTexinfo texi
-  Math expr -> expr
-  Line _ texi -> trTexinfo texi ++ "\n"
-  Env _ texi -> trTexinfo texi
+  Special symbol -> "\\" ++ symbol
+  Single tag -> single tag
+  NoArg tag -> noArg tag
+  Braced tag texi -> braced tag $ trTexinfo tag texi
+  Math expr -> inlineMath context expr
+  Line tag texi -> trTexinfo tag texi ++ "\n"
+  Env tag texi -> trTexinfo tag texi
   TeX markup -> markup
 
+single :: Tag -> LaTeX
+single tag = case tag of
+  "-"  -> ""
+  "/"  -> ""
+  "|"  -> ""
+  "`"  -> "\\`"
+  "^"  -> "\\^"
+  "\"" -> "\\\""
+  "*"  -> "\\\\"
+  "'"  -> "\\'"
+  ","  -> "\\c"
+  "thispage" -> ""
+  "short" -> "\\short"
+  _ -> tag
+
+noArg :: Tag -> LaTeX
+noArg "dots" = "\\( \\dots \\)"
+noArg tag = "{\\" ++ tag ++ "}"
+
+braced :: Tag -> LaTeX -> LaTeX
+braced tag arg = case tag of
+  "anchor" -> glue "label" arg
+  "b" -> glue "textbf" arg
+  "cite" -> glue "textit" arg
+  "file" -> glue "texttt" arg
+  "i" -> glue "textit" arg
+  "r" -> glue "textrm" arg
+  "ref" -> glue "link" arg
+  "strong" -> glue "heading" arg
+  "t" -> glue "texttt" arg
+  "w" -> glue "mbox" arg
+  "dfn" -> "% " ++ arg
+  "titlefont" -> "% " ++ arg
+  "image" -> image arg
+  _ -> glue tag arg
+
+glue :: String -> LaTeX -> LaTeX
+glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
+
+inlineMath :: Context -> Expression -> LaTeX
+inlineMath context expr =
+  "\\( " ++
+  (if context == "lisp" then "\\dark" else "") ++
+  expr ++
+  " \\)"
+
+type File = String
+type Width = String
+type Height = String
+type Alt = String
+type Ext = String
+
+data Image = Img File Width Height Alt Ext deriving Show
+
+imageArg :: Parser Image
+imageArg = Img <$>
+           (argPart <* comma) <*>
+           (argPart <* comma) <*>
+           (argPart <* comma) <*>
+           (altText <* comma) <*>
+           argPart
+
+argPart, altText :: Parser String
+argPart = spaces *> many (noneOf ", ") <* spaces
+altText = spaces *> many (noneOf ",")
+
+comma :: Parser Char
+comma = char ','
+
+image :: String -> LaTeX
+image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
+  where imgParts = parse imageArg "@image argument" arg
+        extract (Right img) = img
+        extract (Left _) = (Img "Image parse error" "" "" "" "")
+        (Img file width height _ ext) = extract imgParts
+        filename = file ++ ext
+        dimension = makeDim width height
+        makeDim "" "" = ""
+        makeDim "" h = "height=" ++ h
+        makeDim w _ = "width=" ++ w
