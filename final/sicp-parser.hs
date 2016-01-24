@@ -10,8 +10,9 @@
 module Main where
 
 import Text.Parsec hiding ((<|>), many)
-import Text.Parsec.String 
+import Text.Parsec.String
 import Control.Applicative
+import qualified Data.Map.Strict as M
 
 -- Texinfo data types
 ----------------------
@@ -52,7 +53,7 @@ texiFragment = plainText <|> atClause <|> special
 ------------------------------------------------------------------------
 plainText :: Parser TexiFragment
 plainText = Plain <$> simpleText ("@{}" ++ specialSymbols)
-               
+
 simpleText :: ExcludedChars -> Parser Text
 simpleText excl = concat <$>
                   many1 (nestedBraces excl <|> many1 (noneOf excl))
@@ -172,10 +173,29 @@ texTags = words "tex"
 main :: IO ()
 main = do
   parseTree <- parseFromFile texinfo "sicp.texi"
+  let onlySet = filter isSetCommand $
+                either (const [Plain "error"]) id parseTree
+  let setArg = map (\line -> case line of
+                              (Line _ (Plain arg : _)) -> arg
+                              _ -> "seterror 0") onlySet
+  let eitherPairs = map (parse assignment "set arg") setArg
+  let pairs = map (either (const ("seterror","1")) id) eitherPairs
+  let dictionary = M.fromList pairs
   let translated = either show id $ fmap (trTexinfo "global") parseTree
+  writeFile "parsed-sicp.txt" $ translated  -- Latex
   --writeFile "parsed-sicp.txt" $ show parseTree
-  writeFile "parsed-sicp.txt" $ translated
-  --print result
+  print dictionary
+
+isSetCommand :: TexiFragment -> Bool
+isSetCommand (Line "set" _) = True
+isSetCommand _ = False
+
+type Variable = String
+type Value = String
+
+assignment :: Parser (Variable, Value)
+assignment = (,) <$> (spaces *> many1 (noneOf " ")) <*>
+             (spaces *> (many anyChar))
 
 -- Translate the Texinfo parse tree to LaTeX
 ---------------------------------------------
