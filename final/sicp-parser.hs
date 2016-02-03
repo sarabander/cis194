@@ -11,6 +11,8 @@ module Main where
 
 import Text.Parsec hiding ((<|>), many)
 import Text.Parsec.String
+import qualified Text.Parsec.Token as P
+import Text.Parsec.Language (emptyDef)
 import Control.Applicative
 import qualified Data.Map as M
 
@@ -305,3 +307,9 @@ image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
         makeDim "" "" = ""
         makeDim "" h = "height=" ++ h
         makeDim w _ = "width=" ++ w
+
+lexer :: P.TokenParser ()
+lexer = P.makeTokenParser emptyDef
+
+braces :: Parser a -> Parser a
+braces = P.braces lexer
