@@ -15,6 +15,7 @@ import qualified Text.Parsec.Token as P
 import Text.Parsec.Language (emptyDef)
 import Control.Applicative
 import qualified Data.Map as M
+import qualified Data.Set as S
 
 -- Texinfo data types
 ----------------------
@@ -71,8 +72,8 @@ special = (Special . (:[])) <$> oneOf specialSymbols
 
 -- A clause beginning with '@'
 -------------------------------
-atClause :: Parser TexiFragment
-atClause = (*>) (char '@') $
+atClause' :: Parser TexiFragment
+atClause' = (*>) (char '@') $
            tryWith (\p -> Braced  <$>  p <*> bracedArg)     bracedTags  <|>
            tryWith (\p -> Math    <$> (p  *> mathArg "{}")) mathTags    <|>
            tryWith (\p -> Line    <$>  p <*> lineArg)       lineTags    <|>
@@ -81,6 +82,69 @@ atClause = (*>) (char '@') $
            tryWith (\p -> NoArg   <$>  p <*  string "{}")   emptyTags   <|>
            try ((\(t, a) -> Env t a) <$> env envTags texiFragment)      <|>
            try ((\(_, a) -> TeX a)   <$> env texTags anyChar)
+
+atClause :: Parser TexiFragment
+atClause = do
+  _ <- char '@'
+  tag <- tagParser
+  argParser tag
+
+tagParser :: Parser Tag
+tagParser = many1 letter <|> (:[]) <$> oneOf singles
+
+singles :: String
+singles = "/-`^\"{}@*'|,"
+
+lineArg' :: Parser Texinfo
+lineArg' = do
+  rawLine <- many (oneOf " \t") >> tillCommentOrEOL
+  let parsedLine = parse texinfo "line argument" rawLine
+  case parsedLine of
+   Right result -> return result
+   Left err -> return [Void] <* (parserFail $ show err)
+
+tillCommentOrEOL :: Parser Text
+tillCommentOrEOL =
+  manyTill anyChar $
+  lookAhead (try (string "@c ") <|> try (string "@comment "))
+  <|> string "\n"
+
+argParser :: Tag -> Parser TexiFragment
+argParser tag = case tagType tag of
+  SingleTag  -> Single  <$> pure tag
+  EmptyTag   -> NoArg   <$> pure tag <* string "{}"
+  BracedTag  -> Braced  <$> pure tag <*> bracedArg
+  MathTag    -> Math    <$> mathArg "{}"
+  LineTag    -> Line    <$> pure tag <*> lineArg'
+  CommentTag -> Comment <$> commentArg
+  EnvTag     -> Env     <$> pure tag <*>
+                (spaces *> (manyTill texiFragment $ endTag tag))
+  TeXTag     -> TeX     <$> (spaces *> (manyTill anyChar $ endTag tag))
+  UnknownTag -> pure Void <* parserFail ("unrecognized tag: " ++ tag)
+
+data TagType = SingleTag
+             | EmptyTag
+             | BracedTag
+             | MathTag
+             | LineTag
+             | CommentTag
+             | EnvTag
+             | TeXTag
+             | UnknownTag
+
+tagType :: Tag -> TagType
+tagType tag | tag ∊ singleSet  = SingleTag
+            | tag ∊ noArgSet   = EmptyTag
+            | tag ∊ bracedSet  = BracedTag
+            | tag ∊ mathSet    = MathTag
+            | tag ∊ lineSet    = LineTag
+            | tag ∊ commentSet = CommentTag
+            | tag ∊ envSet     = EnvTag
+            | tag ∊ texSet     = TeXTag
+            | otherwise        = UnknownTag
+
+(∊) :: Tag -> S.Set Tag -> Bool
+(∊) = S.member
 
 tryWith :: (Parser Tag -> Parser a) -> [Tag] -> Parser a
 tryWith transform = choice . map (try . transform . string)
@@ -148,26 +212,50 @@ specialSymbols = "%$"
 singleTags :: [Tag]
 singleTags = map (:[]) "/-`^\"{}@*'|," ++ words "short thispage"
 
+singleSet :: S.Set Tag
+singleSet = S.fromList singleTags
+
 emptyTags :: [Tag]
 emptyTags = words "TeX copyright dots"
+
+noArgSet :: S.Set Tag
+noArgSet = S.fromList emptyTags
 
 bracedTags :: [Tag]
 bracedTags = words "code ref anchor strong newterm footnote i acronym var r b cite emph image url w value dfn file t titlefont"
 
+bracedSet :: S.Set Tag
+bracedSet = S.fromList bracedTags
+
 mathTags :: [Tag]
 mathTags = words "math"
+
+mathSet :: S.Set Tag
+mathSet = S.fromList mathTags
 
 lineTags :: [Tag]
 lineTags = words "noindent sp item subsubheading author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include node printindex section setfilename setshortcontentsaftertitlepage settitle set subsection subsubsection subtitle title unnumbered"
 
+lineSet :: S.Set Tag
+lineSet = S.fromList lineTags
+
 commentTags :: [Tag]
 commentTags = words "c comment"
+
+commentSet :: S.Set Tag
+commentSet = S.fromList commentTags
 
 envTags :: [Tag]
 envTags = words "detailmenu direntry enumerate example float ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
 
+envSet :: S.Set Tag
+envSet = S.fromList envTags
+
 texTags :: [Tag]
 texTags = words "tex"
+
+texSet :: S.Set Tag
+texSet = S.fromList texTags
 
 -- Read the Texinfo source from file
 -------------------------------------
