@@ -84,20 +84,6 @@ tagParser = many1 letter <|> (:[]) <$> oneOf singles
 singles :: String
 singles = "/-`^\"{}@*'|,"
 
-lineArg :: Parser Texinfo
-lineArg = do
-  rawLine <- many (oneOf " \t") >> tillCommentOrEOL
-  let parsedLine = parse texinfo "line argument" rawLine
-  case parsedLine of
-   Right result -> return result
-   Left err -> return [Void] <* (parserFail $ show err)
-
-tillCommentOrEOL :: Parser Text
-tillCommentOrEOL =
-  manyTill anyChar $
-  lookAhead (try (string "@c ") <|> try (string "@comment "))
-  <|> string "\n"
-
 argParser :: Tag -> Parser TexiFragment
 argParser tag = case tagType tag of
   SingleTag  -> Single  <$> pure tag
@@ -140,6 +126,20 @@ bracedArg = char '{' *> texinfo <* char '}'
 
 mathArg :: ExcludedChars -> Parser Text
 mathArg excl = char '{' *> simpleText excl <* char '}'
+
+lineArg :: Parser Texinfo
+lineArg = do
+  rawLine <- many (oneOf " \t") >> tillCommentOrEOL
+  let parsedLine = parse texinfo "line argument" rawLine
+  case parsedLine of
+   Right result -> return result
+   Left err -> return [Void] <* (parserFail $ show err)
+
+tillCommentOrEOL :: Parser Text
+tillCommentOrEOL =
+  manyTill anyChar $
+  lookAhead (try (string "@c ") <|> try (string "@comment "))
+  <|> string "\n"
 
 -- Special treatment of fragments inside one-line arguments
 -- (newline is not allowed)
