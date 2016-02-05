@@ -165,58 +165,34 @@ commentArg = emptyLine `orMany` noneOf "\n"
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
--- Lists of tags in each category
-----------------------------------
+-- Sets of tags in each category
+---------------------------------
 specialSymbols :: String
 specialSymbols = "%$"
 
-singleTags :: [Tag]
-singleTags = map (:[]) "/-`^\"{}@*'|," ++ words "short thispage"
-
 singleSet :: S.Set Tag
-singleSet = S.fromList singleTags
-
-emptyTags :: [Tag]
-emptyTags = words "TeX copyright dots"
+singleSet = S.fromList $ words "\" ' * , - / @ ^ ` short thispage { | }"
 
 noArgSet :: S.Set Tag
-noArgSet = S.fromList emptyTags
-
-bracedTags :: [Tag]
-bracedTags = words "code ref anchor strong newterm footnote i acronym var r b cite emph image url w value dfn file t titlefont"
+noArgSet = S.fromList $ words "TeX copyright dots"
 
 bracedSet :: S.Set Tag
-bracedSet = S.fromList bracedTags
-
-mathTags :: [Tag]
-mathTags = words "math"
+bracedSet = S.fromList $ words "acronym anchor b cite code dfn emph file footnote i image newterm r ref strong t titlefont url value var w"
 
 mathSet :: S.Set Tag
-mathSet = S.fromList mathTags
-
-lineTags :: [Tag]
-lineTags = words "noindent sp item subsubheading author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include node printindex section setfilename setshortcontentsaftertitlepage settitle set subsection subsubsection subtitle title unnumbered"
+mathSet = S.fromList $ words "math"
 
 lineSet :: S.Set Tag
-lineSet = S.fromList lineTags
-
-commentTags :: [Tag]
-commentTags = words "c comment"
+lineSet = S.fromList $ words "author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include item node noindent printindex section set setfilename setshortcontentsaftertitlepage settitle sp subsection subsubheading subsubsection subtitle title unnumbered"
 
 commentSet :: S.Set Tag
-commentSet = S.fromList commentTags
-
-envTags :: [Tag]
-envTags = words "detailmenu direntry enumerate example float ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
+commentSet = S.fromList $ words "c comment"
 
 envSet :: S.Set Tag
-envSet = S.fromList envTags
-
-texTags :: [Tag]
-texTags = words "tex"
+envSet = S.fromList $ words "detailmenu direntry enumerate example float ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
 
 texSet :: S.Set Tag
-texSet = S.fromList texTags
+texSet = S.fromList $ words "tex"
 
 -- Read the Texinfo source from file
 -------------------------------------
