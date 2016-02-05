@@ -72,17 +72,6 @@ special = (Special . (:[])) <$> oneOf specialSymbols
 
 -- A clause beginning with '@'
 -------------------------------
-atClause' :: Parser TexiFragment
-atClause' = (*>) (char '@') $
-           tryWith (\p -> Braced  <$>  p <*> bracedArg)     bracedTags  <|>
-           tryWith (\p -> Math    <$> (p  *> mathArg "{}")) mathTags    <|>
-           tryWith (\p -> Line    <$>  p <*> lineArg)       lineTags    <|>
-           tryWith (\p -> Single  <$>  p)                   singleTags  <|>
-           tryWith (\p -> Comment <$> (p  *> commentArg))   commentTags <|>
-           tryWith (\p -> NoArg   <$>  p <*  string "{}")   emptyTags   <|>
-           try ((\(t, a) -> Env t a) <$> env envTags texiFragment)      <|>
-           try ((\(_, a) -> TeX a)   <$> env texTags anyChar)
-
 atClause :: Parser TexiFragment
 atClause = do
   _ <- char '@'
@@ -95,8 +84,8 @@ tagParser = many1 letter <|> (:[]) <$> oneOf singles
 singles :: String
 singles = "/-`^\"{}@*'|,"
 
-lineArg' :: Parser Texinfo
-lineArg' = do
+lineArg :: Parser Texinfo
+lineArg = do
   rawLine <- many (oneOf " \t") >> tillCommentOrEOL
   let parsedLine = parse texinfo "line argument" rawLine
   case parsedLine of
@@ -115,7 +104,7 @@ argParser tag = case tagType tag of
   EmptyTag   -> NoArg   <$> pure tag <* string "{}"
   BracedTag  -> Braced  <$> pure tag <*> bracedArg
   MathTag    -> Math    <$> mathArg "{}"
-  LineTag    -> Line    <$> pure tag <*> lineArg'
+  LineTag    -> Line    <$> pure tag <*> lineArg
   CommentTag -> Comment <$> commentArg
   EnvTag     -> Env     <$> pure tag <*>
                 (spaces *> (manyTill texiFragment $ endTag tag))
@@ -146,9 +135,6 @@ tagType tag | tag ∊ singleSet  = SingleTag
 (∊) :: Tag -> S.Set Tag -> Bool
 (∊) = S.member
 
-tryWith :: (Parser Tag -> Parser a) -> [Tag] -> Parser a
-tryWith transform = choice . map (try . transform . string)
-
 bracedArg :: Parser Texinfo
 bracedArg = char '{' *> texinfo <* char '}'
 
@@ -169,24 +155,6 @@ vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
 -- vp is void-parser or empty-line parser, p should match something else
 infixl 3 `orMany`
 
--- Line arguments should not contain line-clauses nor multiline environments
-oneLiner :: Parser TexiFragment
-oneLiner = Plain <$> simpleText ("@{}\n" ++ specialSymbols)               <|>
-           special                                                        <|>
-           (char '@') *>
-           (tryWith (\p -> Single  <$> p)                      singleTags <|>
-            tryWith (\p -> NoArg   <$> p <* string "{}")       emptyTags  <|>
-            tryWith (\p -> Braced  <$> p <*>
-             (char '{' *> many oneLiner <* char '}'))          bracedTags <|>
-            tryWith (\p -> Math    <$> (p *> mathArg "{}\n"))  mathTags   <|>
-            tryWith (\p -> Comment <$> (p *> notEOL))          commentTags)
-
-notEOL :: Parser Text
-notEOL = option "" $ many1 (char ' ') *> many (noneOf "\n")
-
-lineArg :: Parser Texinfo
-lineArg = void `orMany` oneLiner
-
 -- Comment line argument should be left as it is
 -------------------------------------------------
 commentArg :: Parser Text
@@ -194,13 +162,6 @@ commentArg = emptyLine `orMany` noneOf "\n"
 
 -- Environments
 ----------------
-env :: [Tag] -> Parser a -> Parser (Tag, [a])
-env tags p = choice $ map (envSelect p) tags
-
-envSelect :: Parser a -> Tag -> Parser (Tag, [a])
-envSelect p tag = (,) <$> (try . string) tag <* spaces {- <* emptyLine -} <*>
-                (manyTill p $ endTag tag)
-
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
