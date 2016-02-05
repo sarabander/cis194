@@ -113,16 +113,18 @@ oneLiner = Plain <$> simpleText ("@{}\n" ++ specialSymbols)               <|>
             tryWith (\p -> Braced  <$> p <*>
              (char '{' *> many oneLiner <* char '}'))          bracedTags <|>
             tryWith (\p -> Math    <$> (p *> mathArg "{}\n"))  mathTags   <|>
-            tryWith (\p -> Comment <$> (p *> notEOL))          commentTags)
-
-notEOL :: Parser Text
-notEOL = option "" $ many1 (char ' ') *> many (noneOf "\n")
+            tryWith (\p -> Comment <$> (p *> commentText))     commentTags)
 
 lineArg :: Parser Texinfo
 lineArg = void `orMany` oneLiner
 
--- Comment line argument should be left as it is
--------------------------------------------------
+-- For comment text in the middle of line that doesn't consume newline
+-----------------------------------------------------------------------
+commentText :: Parser Text
+commentText = option "" $ many1 (char ' ') *> many (noneOf "\n")
+
+-- Argument of a full-line comment should be left as it is
+-----------------------------------------------------------
 commentArg :: Parser Text
 commentArg = emptyLine `orMany` noneOf "\n"
 
