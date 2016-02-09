@@ -15,6 +15,7 @@ import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.Set as S
 import System.Environment (getArgs)
+import Data.List.Split (splitOn)
 
 -- Texinfo data types
 ----------------------
@@ -38,6 +39,7 @@ data TexiFragment = Void
                   | Braced Tag Texinfo
                   | Math Expression
                   | Line Tag Texinfo
+                  | Assign Variable Value
                   | Env Tag Texinfo
                   | TeX Markup
                   deriving Show
@@ -90,6 +92,7 @@ argParser tag = case tagType tag of
   BracedTag  -> Braced  <$> pure tag <*> bracedArg
   MathTag    -> Math    <$> mathArg "{}"
   LineTag    -> Line    <$> pure tag <*> lineArg
+  AssignTag  -> Assign  <$> variable <*> value
   CommentTag -> Comment <$> commentArg
   EnvTag     -> Env     <$> pure tag <*>
                 (spaces *> (manyTill texiFragment $ endTag tag))
@@ -101,6 +104,7 @@ data TagType = SingleTag
              | BracedTag
              | MathTag
              | LineTag
+             | AssignTag
              | CommentTag
              | EnvTag
              | TeXTag
@@ -112,6 +116,7 @@ tagType tag | tag ∊ singleSet  = SingleTag
             | tag ∊ bracedSet  = BracedTag
             | tag ∊ mathSet    = MathTag
             | tag ∊ lineSet    = LineTag
+            | tag ∊ assignSet  = AssignTag
             | tag ∊ commentSet = CommentTag
             | tag ∊ envSet     = EnvTag
             | tag ∊ texSet     = TeXTag
@@ -140,27 +145,32 @@ tillCommentOrEOL =
   lookAhead (try (string "@c ") <|> try (string "@comment "))
   <|> string "\n"
 
--- Special treatment of fragments inside one-line arguments
--- (newline is not allowed)
-------------------------------------------------------------
-emptyLine :: Parser Text
-emptyLine = manyTill space (newline <|> eof *> pure ' ')
+-- Parsers for the assignment command (@set <var> <val>)
+---------------------------------------------------------
+variable :: Parser Variable
+variable = spaces *> many1 (noneOf " ")
 
-void :: Parser Texinfo
-void = emptyLine *> pure [Void]
-
-orMany :: Parser [a] -> Parser a -> Parser [a]
-vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
--- vp is void-parser or empty-line parser, p should match something else
-infixl 3 `orMany`
+value :: Parser Value
+value = spaces *> manyTill anyChar newline
 
 -- Comment line argument should be left as it is
 -------------------------------------------------
 commentArg :: Parser Text
 commentArg = emptyLine `orMany` noneOf "\n"
 
--- Environments
-----------------
+emptyLine :: Parser Text
+emptyLine = manyTill space (newline <|> eof *> pure ' ')
+
+orMany :: Parser [a] -> Parser a -> Parser [a]
+vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
+-- vp is void-parser or empty-line parser, p should match something else
+infixl 3 `orMany`
+
+void :: Parser Texinfo
+void = emptyLine *> pure [Void]
+
+-- End of environment
+----------------------
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
@@ -182,7 +192,10 @@ mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
 
 lineSet :: S.Set Tag
-lineSet = S.fromList $ words "author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include item node noindent printindex section set setfilename setshortcontentsaftertitlepage settitle sp subsection subsubheading subsubsection subtitle title unnumbered"
+lineSet = S.fromList $ words "author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include item node noindent printindex section setfilename setshortcontentsaftertitlepage settitle sp subsection subsubheading subsubsection subtitle title unnumbered"
+
+assignSet :: S.Set Tag
+assignSet = S.fromList $ words "set"
 
 commentSet :: S.Set Tag
 commentSet = S.fromList $ words "c comment"
@@ -197,42 +210,40 @@ texSet = S.fromList $ words "tex"
 ----------
 main :: IO ()
 main = do
-  commandArgs <- getArgs
-  if null commandArgs
-    then putStrLn "No file name given."
-    else translateFile $ head commandArgs
+  commandArgs <- getArgs -- extract command line arguments to a list
+  case commandArgs of
+   [] -> putStrLn "No input filename given." >>
+         putStrLn "Usage: sicp-parser <input> [ <output> ]."
+   (i:[]) -> translateFile i o -- If only input filename is given then
+     where o = case reverse (splitOn "." i) of -- construct outfile name:
+                ("texi":_:_) -> init i -- convert ".texi" to ".tex",
+                _ -> i ++ ".tex"       -- otherwise just append ".tex".
+   (i:o:_) -> translateFile i o -- Both infile and outfile are given.
 
 -- Read the Texinfo source from file and run the parser over it
 ----------------------------------------------------------------
-translateFile :: FilePath -> IO ()
-translateFile filePath = do
-  parseTree <- parseFromFile texinfo filePath
-  let onlySet = filter isSetCommand $
-                either (const [Plain "error"]) id parseTree
-  let setArg = map (\l -> case l of
-                              (Line _ (Plain arg : _)) -> arg
-                              _ -> "seterror 0") onlySet
-  let eitherPairs = map (parse assignment "set arg") setArg
-  let pairs = map (either (const ("seterror","1")) id) eitherPairs
-  let dictionary = M.fromList pairs
+translateFile :: FilePath -> FilePath -> IO ()
+translateFile inFile outFile = do
+  parseTree <- parseFromFile texinfo inFile
+  let toPair = \(Assign var val) -> (var, val)
+  let dictionary = either (const M.empty) id $
+                   fmap (M.fromList . map toPair . filter isAssign) $
+                   parseTree
   let translated = either show id $
-                   fmap (trTexinfo ("global", dictionary)) parseTree
-  writeFile "parsed-sicp.txt" $ translated  -- Latex
-  --writeFile "parsed-sicp.txt" $ show parseTree
-  print dictionary
+                   fmap (trTexinfo ("global", dictionary)) $
+                   parseTree
+  writeFile "parsetree.txt" $ show parseTree
+  writeFile outFile translated  -- Latex
+  print $ M.toList dictionary
 
-isSetCommand :: TexiFragment -> Bool
-isSetCommand (Line "set" _) = True
-isSetCommand _ = False
-
+isAssign :: TexiFragment -> Bool
+isAssign (Assign _ _) = True
+isAssign _ = False
+                 
 type Context = String  -- if we are inside @code{..}, then context is "code"
 type Variable = String -- a variable defined with @set <variable> <value>
 type Value = String    -- a value of the variable assigned with @set
 type Environment = (Context, M.Map Variable Value)
-
-assignment :: Parser (Variable, Value)
-assignment = (,) <$> (spaces *> many1 (noneOf " ")) <*>
-             (spaces *> (many anyChar))
 
 -- Translate the Texinfo parse tree to LaTeX
 ---------------------------------------------
@@ -250,12 +261,13 @@ trTexiFragment e fr = case fr of
   Braced tag texi -> braced e tag $ trTexinfo (tag, snd e) texi
   Math expr -> inlineMath (fst e) expr
   Line tag texi -> line tag $ trTexinfo (tag, snd e) texi
+  Assign _ _ -> ""
   Env tag texi -> trTexinfo (tag, snd e) texi
   TeX markup -> markup
 
 line :: Tag -> LaTeX -> LaTeX
 line tag arg = case tag of
-  "set" -> ""
+  --"set" -> ""
   _ -> arg ++ "\n"
 
 single :: Tag -> LaTeX
