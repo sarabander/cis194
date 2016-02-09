@@ -232,9 +232,9 @@ translateFile inFile outFile = do
   let translated = either show id $
                    fmap (trTexinfo ("global", dictionary)) $
                    parseTree
-  writeFile "parsetree.txt" $ show parseTree
+  --writeFile "parsetree.txt" $ show parseTree
   writeFile outFile translated  -- Latex
-  print $ M.toList dictionary
+  --print $ M.toList dictionary
 
 isAssign :: TexiFragment -> Bool
 isAssign (Assign _ _) = True
@@ -248,7 +248,19 @@ type Environment = (Context, M.Map Variable Value)
 -- Translate the Texinfo parse tree to LaTeX
 ---------------------------------------------
 trTexinfo :: Environment -> Texinfo -> LaTeX
-trTexinfo e = concat . map (trTexiFragment e)
+trTexinfo e@("lisp",_)      = concat . map (markFragment e)
+trTexinfo e@("smalllisp",_) = concat . map (markFragment e)
+trTexinfo e                 = concat . map (trTexiFragment e)
+
+-- Mark LaTeX fragments in code listings with special sentinel
+---------------------------------------------------------------
+markFragment :: Environment -> TexiFragment -> LaTeX
+markFragment e fr = case fr of
+  Plain text -> text -- don't mark verbatim code
+  _ -> sentinel ++ trTexiFragment e fr ++ sentinel
+
+sentinel :: String
+sentinel = "~"
 
 trTexiFragment :: Environment -> TexiFragment -> LaTeX
 trTexiFragment e fr = case fr of
@@ -260,22 +272,30 @@ trTexiFragment e fr = case fr of
   NoArg tag -> noArg tag
   Braced tag texi -> braced e tag $ trTexinfo (tag, snd e) texi
   Math expr -> inlineMath (fst e) expr
-  Line tag texi -> line tag $ trTexinfo (tag, snd e) texi
+  Line tag texi -> line e tag $ trTexinfo (tag, snd e) texi
   Assign _ _ -> ""
   Env tag texi -> env e tag $ trTexinfo (tag, snd e) texi
-  TeX markup -> markup
+  TeX markup -> init markup -- axe the final newline
 
 env :: Environment -> Tag -> LaTeX -> LaTeX
-env e tag arg = case tag of
+env (c, d) tag arg = case tag of
+  "example" -> enclose "example" arg
+  "smallexample" -> enclose "smallexample" arg
+  "ifinfo" -> enclose "comment" arg
+  "macro" -> enclose "comment" arg
+  "titlepage" -> enclose "comment" arg
+  "quotation" -> enclose "quote" arg
   "lisp" -> enclose "scheme" arg
+  "smalllisp" -> enclose "smallscheme" arg
   _ -> arg
 
 enclose :: String -> LaTeX -> LaTeX
 enclose envName latexArg = "\\begin{" ++ envName ++ "}\n" ++
-                           latexArg ++ "\\end{" ++ envName ++ "}\n"
+                           latexArg ++
+                           "\\end{" ++ envName ++ "}"
 
 braced :: Environment -> Tag -> LaTeX -> LaTeX
-braced e tag arg = case tag of
+braced (c, d) tag arg = case tag of
   "anchor" -> glue "label" arg
   "b" -> glue "textbf" arg
   "cite" -> glue "textit" arg
@@ -289,16 +309,21 @@ braced e tag arg = case tag of
   "dfn" -> "% " ++ arg
   "titlefont" -> "% " ++ arg
   "image" -> image arg
+  "var" -> glue "var" $ (if c == "lisp" || c == "smalllisp"
+                         then "\\dark " else "") ++ arg
   "value" -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
-             M.lookup arg (snd e)
+             M.lookup arg d
   _ -> glue tag arg
 
 glue :: String -> LaTeX -> LaTeX
 glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
 
-line :: Tag -> LaTeX -> LaTeX
-line tag arg = case tag of
-  --"set" -> ""
+line :: Environment -> Tag -> LaTeX -> LaTeX
+line (c,_) tag arg = case tag of
+  "endpage" -> ""
+  "noindent" -> "\\noindent\n"
+  "sp" -> if c == "iftex" then ""
+          else glue "vspace" (arg ++ "em") ++ "\n"
   _ -> arg ++ "\n"
 
 single :: Tag -> LaTeX
@@ -323,7 +348,8 @@ noArg tag = "{\\" ++ tag ++ "}"
 inlineMath :: Context -> Expression -> LaTeX
 inlineMath context expr =
   "\\( " ++
-  (if context == "lisp" then "\\dark" else "") ++
+  (if context == "lisp" || context == "smalllisp"
+   then "\\dark " else "") ++
   expr ++
   " \\)"
 
