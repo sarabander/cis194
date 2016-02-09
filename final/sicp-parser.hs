@@ -14,6 +14,7 @@ import Text.Parsec.String
 import Control.Applicative
 import qualified Data.Map as M
 import qualified Data.Set as S
+import System.Environment (getArgs)
 
 -- Texinfo data types
 ----------------------
@@ -192,11 +193,20 @@ envSet = S.fromList $ words "detailmenu direntry enumerate example float ifinfo 
 texSet :: S.Set Tag
 texSet = S.fromList $ words "tex"
 
--- Read the Texinfo source from file
--------------------------------------
+-- MAIN --
+----------
 main :: IO ()
 main = do
-  parseTree <- parseFromFile texinfo "sicp.texi"
+  commandArgs <- getArgs
+  if null commandArgs
+    then putStrLn "No file name given."
+    else translateFile $ head commandArgs
+
+-- Read the Texinfo source from file and run the parser over it
+----------------------------------------------------------------
+translateFile :: FilePath -> IO ()
+translateFile filePath = do
+  parseTree <- parseFromFile texinfo filePath
   let onlySet = filter isSetCommand $
                 either (const [Plain "error"]) id parseTree
   let setArg = map (\l -> case l of
