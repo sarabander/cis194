@@ -262,8 +262,39 @@ trTexiFragment e fr = case fr of
   Math expr -> inlineMath (fst e) expr
   Line tag texi -> line tag $ trTexinfo (tag, snd e) texi
   Assign _ _ -> ""
-  Env tag texi -> trTexinfo (tag, snd e) texi
+  Env tag texi -> env e tag $ trTexinfo (tag, snd e) texi
   TeX markup -> markup
+
+env :: Environment -> Tag -> LaTeX -> LaTeX
+env e tag arg = case tag of
+  "lisp" -> enclose "scheme" arg
+  _ -> arg
+
+enclose :: String -> LaTeX -> LaTeX
+enclose envName latexArg = "\\begin{" ++ envName ++ "}\n" ++
+                           latexArg ++ "\\end{" ++ envName ++ "}\n"
+
+braced :: Environment -> Tag -> LaTeX -> LaTeX
+braced e tag arg = case tag of
+  "anchor" -> glue "label" arg
+  "b" -> glue "textbf" arg
+  "cite" -> glue "textit" arg
+  "file" -> glue "texttt" arg
+  "i" -> glue "textit" arg
+  "r" -> glue "textrm" arg
+  "ref" -> glue "link" arg
+  "strong" -> glue "heading" arg
+  "t" -> glue "texttt" arg
+  "w" -> glue "mbox" arg
+  "dfn" -> "% " ++ arg
+  "titlefont" -> "% " ++ arg
+  "image" -> image arg
+  "value" -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
+             M.lookup arg (snd e)
+  _ -> glue tag arg
+
+glue :: String -> LaTeX -> LaTeX
+glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
 
 line :: Tag -> LaTeX -> LaTeX
 line tag arg = case tag of
@@ -288,28 +319,6 @@ single tag = case tag of
 noArg :: Tag -> LaTeX
 noArg "dots" = "\\( \\dots \\)"
 noArg tag = "{\\" ++ tag ++ "}"
-
-braced :: Environment -> Tag -> LaTeX -> LaTeX
-braced e tag arg = case tag of
-  "anchor" -> glue "label" arg
-  "b" -> glue "textbf" arg
-  "cite" -> glue "textit" arg
-  "file" -> glue "texttt" arg
-  "i" -> glue "textit" arg
-  "r" -> glue "textrm" arg
-  "ref" -> glue "link" arg
-  "strong" -> glue "heading" arg
-  "t" -> glue "texttt" arg
-  "w" -> glue "mbox" arg
-  "dfn" -> "% " ++ arg
-  "titlefont" -> "% " ++ arg
-  "image" -> image arg
-  "value" -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
-             M.lookup arg (snd e)
-  _ -> glue tag arg
-
-glue :: String -> LaTeX -> LaTeX
-glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
 
 inlineMath :: Context -> Expression -> LaTeX
 inlineMath context expr =
