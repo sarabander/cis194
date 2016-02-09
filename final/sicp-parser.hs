@@ -16,6 +16,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import System.Environment (getArgs)
 import Data.List.Split (splitOn)
+import Data.Maybe (isJust, isNothing)
+import Data.Char (isDigit)
 
 -- Texinfo data types
 ----------------------
@@ -82,9 +84,6 @@ atClause = do
 tagParser :: Parser Tag
 tagParser = many1 letter <|> (:[]) <$> oneOf singles
 
-singles :: String
-singles = "/-`^\"{}@*'|,"
-
 argParser :: Tag -> Parser TexiFragment
 argParser tag = case tagType tag of
   SingleTag  -> Single  <$> pure tag
@@ -94,9 +93,9 @@ argParser tag = case tagType tag of
   LineTag    -> Line    <$> pure tag <*> lineArg
   AssignTag  -> Assign  <$> variable <*> value
   CommentTag -> Comment <$> commentArg
-  EnvTag     -> Env     <$> pure tag <*>
-                (spaces *> (manyTill texiFragment $ endTag tag))
-  TeXTag     -> TeX     <$> (spaces *> (manyTill anyChar $ endTag tag))
+  EnvTag     -> Env     <$> pure tag <*> (manyTill texiFragment $ endTag tag)
+  TeXTag     -> TeX     <$>
+                (newline *> (manyTill anyChar $ endTag tag) <* newline)
   UnknownTag -> pure Void <* parserFail ("unrecognized tag: " ++ tag)
 
 data TagType = SingleTag
@@ -179,14 +178,17 @@ endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 specialSymbols :: String
 specialSymbols = "%$"
 
+singles :: String
+singles = "\"'*,-/@^`{|}"
+
 singleSet :: S.Set Tag
-singleSet = S.fromList $ words "\" ' * , - / @ ^ ` short thispage { | }"
+singleSet = S.fromList $ map (:[]) singles ++ words "short thispage"
 
 noArgSet :: S.Set Tag
 noArgSet = S.fromList $ words "TeX copyright dots"
 
 bracedSet :: S.Set Tag
-bracedSet = S.fromList $ words "acronym anchor b cite code dfn emph file footnote i image newterm r ref strong t titlefont url value var w"
+bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i image newterm r ref strong t titlefont url value var w"
 
 mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
@@ -239,7 +241,7 @@ translateFile inFile outFile = do
 isAssign :: TexiFragment -> Bool
 isAssign (Assign _ _) = True
 isAssign _ = False
-                 
+
 type Context = String  -- if we are inside @code{..}, then context is "code"
 type Variable = String -- a variable defined with @set <variable> <value>
 type Value = String    -- a value of the variable assigned with @set
@@ -250,81 +252,150 @@ type Environment = (Context, M.Map Variable Value)
 trTexinfo :: Environment -> Texinfo -> LaTeX
 trTexinfo e@("lisp",_)      = concat . map (markFragment e)
 trTexinfo e@("smalllisp",_) = concat . map (markFragment e)
-trTexinfo e                 = concat . map (trTexiFragment e)
+trTexinfo e                 = concat . map (trTexiFrag e)
 
--- Mark LaTeX fragments in code listings with special sentinel
----------------------------------------------------------------
+-- Mark LaTeX fragments in code listings with special sentinel and translate
+-----------------------------------------------------------------------------
 markFragment :: Environment -> TexiFragment -> LaTeX
 markFragment e fr = case fr of
   Plain text -> text -- don't mark verbatim code
-  _ -> sentinel ++ trTexiFragment e fr ++ sentinel
+  _ -> sentinel ++ trTexiFrag e fr ++ sentinel
 
 sentinel :: String
 sentinel = "~"
 
-trTexiFragment :: Environment -> TexiFragment -> LaTeX
-trTexiFragment e fr = case fr of
+trTexiFrag :: Environment -> TexiFragment -> LaTeX
+trTexiFrag e fr = case fr of
   Void -> ""
-  Comment text -> "% " ++ text ++ "\n"
-  Plain text -> text
-  Special symbol -> "\\" ++ symbol
-  Single tag -> single tag
-  NoArg tag -> noArg tag
-  Braced tag texi -> braced e tag $ trTexinfo (tag, snd e) texi
-  Math expr -> inlineMath (fst e) expr
-  Line tag texi -> line e tag $ trTexinfo (tag, snd e) texi
-  Assign _ _ -> ""
-  Env tag texi -> env e tag $ trTexinfo (tag, snd e) texi
-  TeX markup -> init markup -- axe the final newline
+  Comment text     -> "% " ++ text ++ "\n"
+  Plain text       -> text
+  Special symbol   -> "\\" ++ symbol
+  Single tag       -> single tag
+  NoArg tag        -> noArg tag
+  Braced tag texi  -> braced e tag $ trTexinfo (tag, snd e) texi
+  Math expr        -> inlineMath (fst e) expr
+  Line tag texi    -> line e tag $ trTexinfo (tag, snd e) texi
+  Assign _ _       -> ""
+  Env "float" texi -> figure e texi
+  Env tag texi     -> env e tag $ trTexinfo (tag, snd e) texi
+  TeX markup       -> markup
 
 env :: Environment -> Tag -> LaTeX -> LaTeX
-env (c, d) tag arg = case tag of
-  "example" -> enclose "example" arg
+env (c, _) tag arg = case tag of
+  "example"      -> enclose "example" arg
   "smallexample" -> enclose "smallexample" arg
-  "ifinfo" -> enclose "comment" arg
-  "macro" -> enclose "comment" arg
-  "titlepage" -> enclose "comment" arg
-  "quotation" -> enclose "quote" arg
-  "lisp" -> enclose "scheme" arg
-  "smalllisp" -> enclose "smallscheme" arg
+  "ifinfo"       -> enclose "comment" arg
+  "macro"        -> enclose "comment" arg
+  "titlepage"    -> enclose "comment" arg
+  "quotation"    -> enclose "quote" arg
+  "lisp"         -> if c == "footnote"
+                    then enclose "smallscheme" arg
+                    else enclose "scheme" arg
+  "smalllisp"    -> enclose "smallscheme" arg
   _ -> arg
 
 enclose :: String -> LaTeX -> LaTeX
-enclose envName latexArg = "\\begin{" ++ envName ++ "}\n" ++
+enclose envName latexArg = "\\begin{" ++ envName ++ "}" ++
                            latexArg ++
                            "\\end{" ++ envName ++ "}"
 
+figure :: Environment -> Texinfo -> LaTeX
+figure _ [] = "" -- if we had '@float@end float'
+figure (_, d) texi =
+  maybe "\\error{Figure components are faulty or missing!}" id $
+  do let getFrag p = fmap (trTexiFrag ("float", d)) . seekTexi p
+     let spot = getFrag isPlacement [head texi] --must be right after @float
+     place   <- if isNothing spot then Just "[tb]\n" else spot
+     anchor  <- getFrag isAnchor texi
+     art     <- getFrag isIfinfo texi
+     istex   <- seekTexi isIftex texi -- get parse tree of @iftex
+     img     <- getFrag isImage [istex]
+     caption <- getFrag isCaption [istex]
+     let title = if length caption < 69 || isJust (seekTexi isShort texi)
+                 then "\\par\\bigskip\n\\noindent\n" ++ caption
+                 else "\\begin{quote}\n" ++ caption ++ "\n\\end{quote}"
+     return $
+       "\\begin{figure}" ++ place ++ anchor ++ "\n\\centering\n"
+       ++ art ++ "\n" ++ img ++ "\n" ++ title ++ "\n\\end{figure}"
+
+isPlacement, isAnchor, isIfinfo, isIftex, isImage, isCaption, isShort ::
+  TexiFragment -> Bool
+isPlacement (Plain ('[':_)) = True
+isPlacement _ = False
+
+isAnchor (Braced "anchor" _) = True
+isAnchor _ = False
+
+isIfinfo (Env "ifinfo" _) = True
+isIfinfo _ = False
+
+isIftex (Env "iftex" _) = True
+isIftex _ = False
+
+isImage (Braced "image" _) = True
+isImage _ = False
+
+isCaption (Braced "caption" _) = True
+isCaption _ = False
+
+isShort (Single "short") = True
+isShort _ = False
+
+seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
+seekTexi _ [] = Nothing
+seekTexi p (t:ts) = case seekFrag p t of
+                     Nothing -> seekTexi p ts
+                     result  -> result
+
+seekFrag :: (TexiFragment -> Bool) -> TexiFragment -> Maybe TexiFragment
+seekFrag p fr | p fr = Just fr
+seekFrag p (Braced _ texi) = seekTexi p texi
+seekFrag p (Line   _ texi) = seekTexi p texi
+seekFrag p (Env    _ texi) = seekTexi p texi
+seekFrag _ _ = Nothing
+
 braced :: Environment -> Tag -> LaTeX -> LaTeX
 braced (c, d) tag arg = case tag of
-  "anchor" -> glue "label" arg
-  "b" -> glue "textbf" arg
-  "cite" -> glue "textit" arg
-  "file" -> glue "texttt" arg
-  "i" -> glue "textit" arg
-  "r" -> glue "textrm" arg
-  "ref" -> glue "link" arg
-  "strong" -> glue "heading" arg
-  "t" -> glue "texttt" arg
-  "w" -> glue "mbox" arg
-  "dfn" -> "% " ++ arg
+  "anchor"    -> phantom c ++ glue "label" arg
+  "b"         -> glue "textbf" arg
+  "caption"   -> arg
+  "cite"      -> glue "textit" arg
+  "file"      -> glue "texttt" arg
+  "i"         -> glue "textit" arg
+  "r"         -> glue "textrm" arg
+  "ref"       -> glue "link" $ prefixLink arg
+  "strong"    -> glue "heading" arg
+  "t"         -> glue "texttt" arg
+  "w"         -> glue "mbox" arg
+  "dfn"       -> "% " ++ arg
   "titlefont" -> "% " ++ arg
-  "image" -> image arg
-  "var" -> glue "var" $ (if c == "lisp" || c == "smalllisp"
-                         then "\\dark " else "") ++ arg
-  "value" -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
-             M.lookup arg d
-  _ -> glue tag arg
+  "image"     -> image arg
+  "var"       -> glue "var" $ (if c == "lisp" || c == "smalllisp"
+                               then "\\dark " else "") ++ arg
+  "value"     -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
+                 M.lookup arg d
+  _           -> glue tag arg
+
+phantom :: Context -> LaTeX
+phantom "float"  = "\\phantomsection"
+phantom "strong" = "\\phantomsection"
+phantom _ = ""
+
+prefixLink :: LaTeX -> LaTeX
+prefixLink arg = case arg of
+  [] -> ""
+  (x:_) -> if isDigit x then "Section " ++ arg else arg
 
 glue :: String -> LaTeX -> LaTeX
 glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
 
 line :: Environment -> Tag -> LaTeX -> LaTeX
 line (c,_) tag arg = case tag of
-  "endpage" -> ""
+  "endpage"  -> ""
   "noindent" -> "\\noindent\n"
-  "sp" -> if c == "iftex" then ""
-          else glue "vspace" (arg ++ "em") ++ "\n"
-  _ -> arg ++ "\n"
+  "sp"       -> if c == "iftex" then ""
+                else glue "vspace" (arg ++ "em") ++ "\n"
+  _          -> arg ++ "\n"
 
 single :: Tag -> LaTeX
 single tag = case tag of
@@ -338,12 +409,13 @@ single tag = case tag of
   "'"  -> "\\'"
   ","  -> "\\c"
   "thispage" -> ""
-  "short" -> "\\short"
+  --"short" -> "\\short"
+  "short" -> ""
   _ -> tag
 
 noArg :: Tag -> LaTeX
 noArg "dots" = "\\( \\dots \\)"
-noArg tag = "{\\" ++ tag ++ "}"
+noArg tag    = "{\\" ++ tag ++ "}"
 
 inlineMath :: Context -> Expression -> LaTeX
 inlineMath context expr =
