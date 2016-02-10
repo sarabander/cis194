@@ -445,10 +445,10 @@ type Ext = String
 
 image :: String -> LaTeX
 image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
-  where imgParts = parse imageArg "@image argument" arg
-        extract (Right img) = img
-        extract (Left _) = (Img "Image parse error" "" "" "" "")
-        (Img file width height _ ext) = extract imgParts
+  where argParts = parse imageArg "image argument" arg
+        (Img file width height _ ext) = case argParts of
+          (Right img) -> img
+          (Left _)    -> Img "Wrong argument format." "" "" "" ""
         filename = file ++ ext
         dimension = makeDim width height
         makeDim "" "" = ""
