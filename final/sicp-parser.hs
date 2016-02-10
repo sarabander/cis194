@@ -32,8 +32,7 @@ type Expression = String
 type Markup = String
 type LaTeX = String
 
-data TexiFragment = Void
-                  | Comment Text
+data TexiFragment = Comment Text
                   | Plain Text
                   | Special Symbol
                   | Single Tag
@@ -96,7 +95,7 @@ argParser tag = case tagType tag of
   EnvTag     -> Env     <$> pure tag <*> (manyTill texiFragment $ endTag tag)
   TeXTag     -> TeX     <$>
                 (newline *> (manyTill anyChar $ endTag tag) <* newline)
-  UnknownTag -> pure Void <* parserFail ("unrecognized tag: " ++ tag)
+  UnknownTag -> parserFail ("unrecognized tag: " ++ tag)
 
 data TagType = SingleTag
              | EmptyTag
@@ -140,7 +139,7 @@ lineArg = do
   let parsedLine = parse texinfo "line argument" rawLine
   case parsedLine of
    Right result -> return result
-   Left err -> return [Void] <* (parserFail $ show err)
+   Left err -> parserFail $ show err
 
 tillCommentOrEOL :: Parser Text
 tillCommentOrEOL =
@@ -168,9 +167,6 @@ orMany :: Parser [a] -> Parser a -> Parser [a]
 vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
 -- vp is void-parser or empty-line parser, p should match something else
 infixl 3 `orMany`
-
-void :: Parser Texinfo
-void = emptyLine *> pure [Void]
 
 -- Recognize the end of environment
 ------------------------------------
@@ -272,7 +268,6 @@ trTexinfo e                 = concat . map (trTexiFrag e)
 
 trTexiFrag :: Environment -> TexiFragment -> LaTeX
 trTexiFrag e fr = case fr of
-  Void             -> ""
   Comment text     -> "% " ++ text ++ "\n"
   Plain text       -> text
   Special symbol   -> "\\" ++ symbol
