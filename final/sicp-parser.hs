@@ -124,12 +124,16 @@ tagType tag | tag ∊ singleSet  = SingleTag
 (∊) :: Tag -> S.Set Tag -> Bool
 (∊) = S.member
 
+-- Parsers for an argument inside braces
+-----------------------------------------
 bracedArg :: Parser Texinfo
 bracedArg = char '{' *> texinfo <* char '}'
 
 mathArg :: ExcludedChars -> Parser Text
 mathArg excl = char '{' *> simpleText excl <* char '}'
 
+-- Parsers for a single-line argument
+--------------------------------------
 lineArg :: Parser Texinfo
 lineArg = do
   rawLine <- many (oneOf " \t") >> tillCommentOrEOL
@@ -168,13 +172,13 @@ infixl 3 `orMany`
 void :: Parser Texinfo
 void = emptyLine *> pure [Void]
 
--- End of environment
-----------------------
+-- Recognize the end of environment
+------------------------------------
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
--- Sets of tags in each category
----------------------------------
+-- Tags categorized by argument parsing style
+----------------------------------------------
 specialSymbols :: String
 specialSymbols = "%$"
 
@@ -242,17 +246,12 @@ isAssign :: TexiFragment -> Bool
 isAssign (Assign _ _) = True
 isAssign _ = False
 
+-- For remembering the command inside which we are and the assigned variables
+------------------------------------------------------------------------------
 type Context = String  -- if we are inside @code{..}, then context is "code"
 type Variable = String -- a variable defined with @set <variable> <value>
 type Value = String    -- a value of the variable assigned with @set
 type Environment = (Context, M.Map Variable Value)
-
--- Translate the Texinfo parse tree to LaTeX
----------------------------------------------
-trTexinfo :: Environment -> Texinfo -> LaTeX
-trTexinfo e@("lisp",_)      = concat . map (markFragment e)
-trTexinfo e@("smalllisp",_) = concat . map (markFragment e)
-trTexinfo e                 = concat . map (trTexiFrag e)
 
 -- Mark LaTeX fragments in code listings with special sentinel and translate
 -----------------------------------------------------------------------------
@@ -264,9 +263,16 @@ markFragment e fr = case fr of
 sentinel :: String
 sentinel = "~"
 
+-- Translate the Texinfo parse tree to LaTeX
+---------------------------------------------
+trTexinfo :: Environment -> Texinfo -> LaTeX
+trTexinfo e@("lisp",_)      = concat . map (markFragment e)
+trTexinfo e@("smalllisp",_) = concat . map (markFragment e)
+trTexinfo e                 = concat . map (trTexiFrag e)
+
 trTexiFrag :: Environment -> TexiFragment -> LaTeX
 trTexiFrag e fr = case fr of
-  Void -> ""
+  Void             -> ""
   Comment text     -> "% " ++ text ++ "\n"
   Plain text       -> text
   Special symbol   -> "\\" ++ symbol
@@ -280,79 +286,27 @@ trTexiFrag e fr = case fr of
   Env tag texi     -> env e tag $ trTexinfo (tag, snd e) texi
   TeX markup       -> markup
 
-env :: Environment -> Tag -> LaTeX -> LaTeX
-env (c, _) tag arg = case tag of
-  "example"      -> enclose "example" arg
-  "smallexample" -> enclose "smallexample" arg
-  "ifinfo"       -> enclose "comment" arg
-  "macro"        -> enclose "comment" arg
-  "titlepage"    -> enclose "comment" arg
-  "quotation"    -> enclose "quote" arg
-  "lisp"         -> if c == "footnote"
-                    then enclose "smallscheme" arg
-                    else enclose "scheme" arg
-  "smalllisp"    -> enclose "smallscheme" arg
-  _ -> arg
+-- Helper functions that build LaTeX fragments
+-----------------------------------------------
+single :: Tag -> LaTeX
+single tag = case tag of
+  "-"  -> ""
+  "/"  -> ""
+  "|"  -> ""
+  "`"  -> "\\`"
+  "^"  -> "\\^"
+  "\"" -> "\\\""
+  "*"  -> "\\\\"
+  "'"  -> "\\'"
+  ","  -> "\\c"
+  "thispage" -> ""
+  --"short" -> "\\short"
+  "short" -> ""
+  _ -> tag
 
-enclose :: String -> LaTeX -> LaTeX
-enclose envName latexArg = "\\begin{" ++ envName ++ "}" ++
-                           latexArg ++
-                           "\\end{" ++ envName ++ "}"
-
-figure :: Environment -> Texinfo -> LaTeX
-figure _ [] = "" -- if we had '@float@end float'
-figure (_, d) texi =
-  maybe "\\error{Figure components are faulty or missing!}" id $
-  do let getFrag p = fmap (trTexiFrag ("float", d)) . seekTexi p
-     let spot = getFrag isPlacement [head texi] --must be right after @float
-     place   <- if isNothing spot then Just "[tb]\n" else spot
-     anchor  <- getFrag isAnchor texi
-     art     <- getFrag isIfinfo texi
-     istex   <- seekTexi isIftex texi -- get parse tree of @iftex
-     img     <- getFrag isImage [istex]
-     caption <- getFrag isCaption [istex]
-     let title = if length caption < 69 || isJust (seekTexi isShort texi)
-                 then "\\par\\bigskip\n\\noindent\n" ++ caption
-                 else "\\begin{quote}\n" ++ caption ++ "\n\\end{quote}"
-     return $
-       "\\begin{figure}" ++ place ++ anchor ++ "\n\\centering\n"
-       ++ art ++ "\n" ++ img ++ "\n" ++ title ++ "\n\\end{figure}"
-
-isPlacement, isAnchor, isIfinfo, isIftex, isImage, isCaption, isShort ::
-  TexiFragment -> Bool
-isPlacement (Plain ('[':_)) = True
-isPlacement _ = False
-
-isAnchor (Braced "anchor" _) = True
-isAnchor _ = False
-
-isIfinfo (Env "ifinfo" _) = True
-isIfinfo _ = False
-
-isIftex (Env "iftex" _) = True
-isIftex _ = False
-
-isImage (Braced "image" _) = True
-isImage _ = False
-
-isCaption (Braced "caption" _) = True
-isCaption _ = False
-
-isShort (Single "short") = True
-isShort _ = False
-
-seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
-seekTexi _ [] = Nothing
-seekTexi p (t:ts) = case seekFrag p t of
-                     Nothing -> seekTexi p ts
-                     result  -> result
-
-seekFrag :: (TexiFragment -> Bool) -> TexiFragment -> Maybe TexiFragment
-seekFrag p fr | p fr = Just fr
-seekFrag p (Braced _ texi) = seekTexi p texi
-seekFrag p (Line   _ texi) = seekTexi p texi
-seekFrag p (Env    _ texi) = seekTexi p texi
-seekFrag _ _ = Nothing
+noArg :: Tag -> LaTeX
+noArg "dots" = "\\( \\dots \\)"
+noArg tag    = "{\\" ++ tag ++ "}"
 
 braced :: Environment -> Tag -> LaTeX -> LaTeX
 braced (c, d) tag arg = case tag of
@@ -381,41 +335,13 @@ phantom "float"  = "\\phantomsection"
 phantom "strong" = "\\phantomsection"
 phantom _ = ""
 
+glue :: String -> LaTeX -> LaTeX
+glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
+
 prefixLink :: LaTeX -> LaTeX
 prefixLink arg = case arg of
   [] -> ""
   (x:_) -> if isDigit x then "Section " ++ arg else arg
-
-glue :: String -> LaTeX -> LaTeX
-glue latexTag latexArg = "\\" ++ latexTag ++ "{" ++ latexArg ++ "}"
-
-line :: Environment -> Tag -> LaTeX -> LaTeX
-line (c,_) tag arg = case tag of
-  "endpage"  -> ""
-  "noindent" -> "\\noindent\n"
-  "sp"       -> if c == "iftex" then ""
-                else glue "vspace" (arg ++ "em") ++ "\n"
-  _          -> arg ++ "\n"
-
-single :: Tag -> LaTeX
-single tag = case tag of
-  "-"  -> ""
-  "/"  -> ""
-  "|"  -> ""
-  "`"  -> "\\`"
-  "^"  -> "\\^"
-  "\"" -> "\\\""
-  "*"  -> "\\\\"
-  "'"  -> "\\'"
-  ","  -> "\\c"
-  "thispage" -> ""
-  --"short" -> "\\short"
-  "short" -> ""
-  _ -> tag
-
-noArg :: Tag -> LaTeX
-noArg "dots" = "\\( \\dots \\)"
-noArg tag    = "{\\" ++ tag ++ "}"
 
 inlineMath :: Context -> Expression -> LaTeX
 inlineMath context expr =
@@ -425,13 +351,114 @@ inlineMath context expr =
   expr ++
   " \\)"
 
+line :: Environment -> Tag -> LaTeX -> LaTeX
+line (c,_) tag arg = case tag of
+  "endpage"  -> ""
+  "noindent" -> "\\noindent\n"
+  "sp"       -> if c == "iftex" then ""
+                else glue "vspace" (arg ++ "em") ++ "\n"
+  _          -> arg ++ "\n"
+
+env :: Environment -> Tag -> LaTeX -> LaTeX
+env (c, _) tag arg = case tag of
+  "example"      -> enclose "example" arg
+  "smallexample" -> enclose "smallexample" arg
+  "ifinfo"       -> enclose "comment" arg
+  "macro"        -> enclose "comment" arg
+  "titlepage"    -> enclose "comment" arg
+  "quotation"    -> enclose "quote" arg
+  "lisp"         -> if c == "footnote"
+                    then enclose "smallscheme" arg
+                    else enclose "scheme" arg
+  "smalllisp"    -> enclose "smallscheme" arg
+  _ -> arg
+
+enclose :: String -> LaTeX -> LaTeX
+enclose envr inner =
+  "\\begin{" ++ envr ++ "}" ++ inner ++ "\\end{" ++ envr ++ "}"
+
+-- Extract the structure of figure floats
+------------------------------------------
+figure :: Environment -> Texinfo -> LaTeX
+figure _ [] = "" -- in case we had just '@float@end float'
+figure (_, d) texi =
+  maybe "\\error{Figure components are faulty or missing!}" id $
+  do let get p = fmap (trTexiFrag ("float", d)) . seekTexi p
+     let spot = get isPlacement [head texi] --must be right after @float
+     place   <- if isNothing spot then Just "[tb]\n" else spot
+     anchor  <- get isAnchor texi
+     art     <- get isIfinfo texi
+     istex   <- seekTexi isIftex texi -- get parse tree of @iftex
+     img     <- get isImage [istex]
+     caption <- get isCaption [istex]
+     let title = if length caption < 69 || isJust (seekTexi isShort texi)
+                 then "\\par\\bigskip\n\\noindent\n" ++ caption
+                 else "\\begin{quote}\n" ++ caption ++ "\n\\end{quote}"
+     return $
+       "\\begin{figure}" ++ place ++ anchor ++ "\n\\centering\n"
+       ++ art ++ "\n" ++ img ++ "\n" ++ title ++ "\n\\end{figure}"
+
+-- Search a fragment that satisfies a predicate
+------------------------------------------------
+seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
+seekTexi _ [] = Nothing
+seekTexi p (t:ts) = case seekFrag p t of
+                     Nothing -> seekTexi p ts
+                     result  -> result
+
+seekFrag :: (TexiFragment -> Bool) -> TexiFragment -> Maybe TexiFragment
+seekFrag p fr | p fr = Just fr
+seekFrag p (Braced _ texi) = seekTexi p texi
+seekFrag p (Line   _ texi) = seekTexi p texi
+seekFrag p (Env    _ texi) = seekTexi p texi
+seekFrag _ _ = Nothing
+
+-- The predicates that match certain Texinfo fragments
+-------------------------------------------------------
+isPlacement, isAnchor, isIfinfo, isIftex, isImage, isCaption, isShort ::
+  TexiFragment -> Bool
+isPlacement (Plain ('[':_)) = True
+isPlacement _ = False
+
+isAnchor (Braced "anchor" _) = True
+isAnchor _ = False
+
+isIfinfo (Env "ifinfo" _) = True
+isIfinfo _ = False
+
+isIftex (Env "iftex" _) = True
+isIftex _ = False
+
+isImage (Braced "image" _) = True
+isImage _ = False
+
+isCaption (Braced "caption" _) = True
+isCaption _ = False
+
+isShort (Single "short") = True
+isShort _ = False
+
+-- Parse the components of an image
+------------------------------------
+data Image = Img File Width Height Alt Ext deriving Show
+
 type File = String
 type Width = String
 type Height = String
 type Alt = String
 type Ext = String
 
-data Image = Img File Width Height Alt Ext deriving Show
+image :: String -> LaTeX
+image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
+  where imgParts = parse imageArg "@image argument" arg
+        extract (Right img) = img
+        extract (Left _) = (Img "Image parse error" "" "" "" "")
+        (Img file width height _ ext) = extract imgParts
+        filename = file ++ ext
+        dimension = makeDim width height
+        makeDim "" "" = ""
+        makeDim "" h = "height=" ++ h
+        makeDim w _ = "width=" ++ w
 
 imageArg :: Parser Image
 imageArg = Img <$>
@@ -447,15 +474,3 @@ altText = spaces *> many (noneOf ",")
 
 comma :: Parser Char
 comma = char ','
-
-image :: String -> LaTeX
-image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
-  where imgParts = parse imageArg "@image argument" arg
-        extract (Right img) = img
-        extract (Left _) = (Img "Image parse error" "" "" "" "")
-        (Img file width height _ ext) = extract imgParts
-        filename = file ++ ext
-        dimension = makeDim width height
-        makeDim "" "" = ""
-        makeDim "" h = "height=" ++ h
-        makeDim w _ = "width=" ++ w
