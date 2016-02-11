@@ -38,12 +38,35 @@ data TexiFragment = Comment Text
                   | Single Tag
                   | NoArg Tag
                   | Braced Tag Texinfo
+                  | Image ImgParts
                   | Math Expression
                   | Line Tag Texinfo
                   | Assign Variable Value
                   | Env Tag Texinfo
+                  | Figure (FigParts TexiFragment)
                   | TeX Markup
                   deriving Show
+
+data ImgParts = Img File Width Height Alt Ext deriving Show
+
+type File = String
+type Width = String
+type Height = String
+type Alt = String
+type Ext = String
+
+data FigParts a = Fig { figPlace   :: a
+                      , figAnchor  :: a
+                      , figArt     :: a
+                      , figImg     :: a
+                      , figCaption :: a
+                      , figCaptype :: CapType
+                      } deriving Show
+
+instance Functor FigParts where
+  fmap f (Fig k l m n o z) = Fig (f k) (f l) (f m) (f n) (f o) z
+
+data CapType = Short | Long deriving (Show, Eq)
 
 -- The compound parser to handle a Texinfo file
 ------------------------------------------------
@@ -88,11 +111,13 @@ argParser tag = case tagType tag of
   SingleTag  -> Single  <$> pure tag
   EmptyTag   -> NoArg   <$> pure tag <* string "{}"
   BracedTag  -> Braced  <$> pure tag <*> bracedArg
+  ImageTag   -> Image   <$> imageArg
   MathTag    -> Math    <$> mathArg "{}"
   LineTag    -> Line    <$> pure tag <*> lineArg
   AssignTag  -> Assign  <$> variable <*> value
   CommentTag -> Comment <$> commentArg
   EnvTag     -> Env     <$> pure tag <*> (manyTill texiFragment $ endTag tag)
+  FigureTag  -> Figure  <$> figureArg tag
   TeXTag     -> TeX     <$>
                 (newline *> (manyTill anyChar $ endTag tag) <* newline)
   UnknownTag -> parserFail ("unrecognized tag: " ++ tag)
@@ -100,11 +125,13 @@ argParser tag = case tagType tag of
 data TagType = SingleTag
              | EmptyTag
              | BracedTag
+             | ImageTag
              | MathTag
              | LineTag
              | AssignTag
              | CommentTag
              | EnvTag
+             | FigureTag
              | TeXTag
              | UnknownTag
 
@@ -112,11 +139,13 @@ tagType :: Tag -> TagType
 tagType tag | tag ∊ singleSet  = SingleTag
             | tag ∊ noArgSet   = EmptyTag
             | tag ∊ bracedSet  = BracedTag
+            | tag ∊ imageSet   = ImageTag
             | tag ∊ mathSet    = MathTag
             | tag ∊ lineSet    = LineTag
             | tag ∊ assignSet  = AssignTag
             | tag ∊ commentSet = CommentTag
             | tag ∊ envSet     = EnvTag
+            | tag ∊ figureSet  = FigureTag
             | tag ∊ texSet     = TeXTag
             | otherwise        = UnknownTag
 
@@ -127,6 +156,24 @@ tagType tag | tag ∊ singleSet  = SingleTag
 -----------------------------------------
 bracedArg :: Parser Texinfo
 bracedArg = char '{' *> texinfo <* char '}'
+
+imageArg :: Parser ImgParts
+imageArg = char '{' *> argParts <* char '}'
+
+argParts :: Parser ImgParts
+argParts = Img <$>
+           (argPart <* comma) <*>
+           (argPart <* comma) <*>
+           (argPart <* comma) <*>
+           (altText <* comma) <*>
+           argPart
+
+argPart, altText :: Parser String
+argPart = spaces *> many (noneOf ", {}") <* spaces
+altText = spaces *> many (noneOf ",{}")
+
+comma :: Parser Char
+comma = char ','
 
 mathArg :: ExcludedChars -> Parser Text
 mathArg excl = char '{' *> simpleText excl <* char '}'
@@ -173,6 +220,71 @@ infixl 3 `orMany`
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
 
+-- A parser for figure float innards
+-------------------------------------
+figureArg :: Tag -> Parser (FigParts TexiFragment)
+figureArg tag = do
+  texi <- manyTill texiFragment $ endTag tag
+  let figParts =
+        do let defaultPlace = Just (Plain "[tb]\n")
+           let spot = seekTexi isPlacement texi
+           place   <- if isNothing spot then defaultPlace else spot
+           anchor  <- seekTexi isAnchor texi
+           art     <- seekTexi isIfinfo texi
+           istex   <- seekTexi isIftex texi
+           img     <- seekTexi isImage [istex]
+           caption <- seekTexi isCaption [istex]
+           let captype = if isJust (seekTexi isShort [istex])
+                         then Short else Long
+           return (Fig place anchor art img caption captype)
+  case figParts of
+   Just parts -> return parts
+   Nothing -> parserFail "Figure float components are faulty or missing!"
+
+-- Search a fragment that satisfies a predicate
+------------------------------------------------
+seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
+seekTexi _ [] = Nothing
+seekTexi p (t:ts) = case seekFrag p t of
+                     Nothing -> seekTexi p ts
+                     result  -> result
+
+seekFrag :: (TexiFragment -> Bool) -> TexiFragment -> Maybe TexiFragment
+seekFrag p fr | p fr = Just fr
+seekFrag p (Braced _ texi) = seekTexi p texi
+seekFrag p (Line   _ texi) = seekTexi p texi
+seekFrag p (Env    _ texi) = seekTexi p texi
+seekFrag _ _ = Nothing
+
+-- The predicates that match certain Texinfo fragments
+-------------------------------------------------------
+isPlacement, isAnchor, isIfinfo, isIftex, isImage, isCaption, isShort,
+  isAssign :: TexiFragment -> Bool
+
+isPlacement (Plain ('[':_)) = True
+isPlacement _ = False
+
+isAnchor (Braced "anchor" _) = True
+isAnchor _ = False
+
+isIfinfo (Env "ifinfo" _) = True
+isIfinfo _ = False
+
+isIftex (Env "iftex" _) = True
+isIftex _ = False
+
+isImage (Image _) = True
+isImage _ = False
+
+isCaption (Braced "caption" _) = True
+isCaption _ = False
+
+isShort (Single "short") = True
+isShort _ = False
+
+isAssign (Assign _ _) = True
+isAssign _ = False
+
 -- Tags categorized by argument parsing style
 ----------------------------------------------
 specialSymbols :: String
@@ -188,7 +300,10 @@ noArgSet :: S.Set Tag
 noArgSet = S.fromList $ words "TeX copyright dots"
 
 bracedSet :: S.Set Tag
-bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i image newterm r ref strong t titlefont url value var w"
+bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i newterm r ref strong t titlefont url value var w"
+
+imageSet :: S.Set Tag
+imageSet = S.fromList $ words "image"
 
 mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
@@ -203,7 +318,10 @@ commentSet :: S.Set Tag
 commentSet = S.fromList $ words "c comment"
 
 envSet :: S.Set Tag
-envSet = S.fromList $ words "detailmenu direntry enumerate example float ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
+envSet = S.fromList $ words "detailmenu direntry enumerate example ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
+
+figureSet :: S.Set Tag
+figureSet = S.fromList $ words "float"
 
 texSet :: S.Set Tag
 texSet = S.fromList $ words "tex"
@@ -238,10 +356,6 @@ translateFile inFile outFile = do
   writeFile outFile translated  -- Latex
   --print $ M.toList dictionary
 
-isAssign :: TexiFragment -> Bool
-isAssign (Assign _ _) = True
-isAssign _ = False
-
 -- For remembering the command inside which we are and the assigned variables
 ------------------------------------------------------------------------------
 type Context = String  -- if we are inside @code{..}, then context is "code"
@@ -274,11 +388,12 @@ trTexiFrag e fr = case fr of
   Single tag       -> single tag
   NoArg tag        -> noArg tag
   Braced tag texi  -> braced e tag $ trTexinfo (tag, snd e) texi
+  Image parts      -> image parts
   Math expr        -> inlineMath (fst e) expr
   Line tag texi    -> line e tag $ trTexinfo (tag, snd e) texi
   Assign _ _       -> ""
-  Env "float" texi -> figure e texi
   Env tag texi     -> env e tag $ trTexinfo (tag, snd e) texi
+  Figure parts     -> figure e parts
   TeX markup       -> markup
 
 -- Helper functions that build LaTeX fragments
@@ -318,7 +433,6 @@ braced (c, d) tag arg = case tag of
   "w"         -> glue "mbox" arg
   "dfn"       -> "% " ++ arg
   "titlefont" -> "% " ++ arg
-  "image"     -> image arg
   "var"       -> glue "var" $ (if c == "lisp" || c == "smalllisp"
                                then "\\dark " else "") ++ arg
   "value"     -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
@@ -372,100 +486,25 @@ enclose :: String -> LaTeX -> LaTeX
 enclose envr inner =
   "\\begin{" ++ envr ++ "}" ++ inner ++ "\\end{" ++ envr ++ "}"
 
--- Extract the structure of figure floats
-------------------------------------------
-figure :: Environment -> Texinfo -> LaTeX
-figure _ [] = "" -- in case we had just '@float@end float'
-figure (_, d) texi =
-  maybe "\\error{Figure components are faulty or missing!}" id $
-  do let get p = fmap (trTexiFrag ("float", d)) . seekTexi p
-     let spot = get isPlacement [head texi] --must be right after @float
-     place   <- if isNothing spot then Just "[tb]\n" else spot
-     anchor  <- get isAnchor texi
-     art     <- get isIfinfo texi
-     istex   <- seekTexi isIftex texi -- get parse tree of @iftex
-     img     <- get isImage [istex]
-     caption <- get isCaption [istex]
-     let title = if length caption < 69 || isJust (seekTexi isShort texi)
-                 then "\\par\\bigskip\n\\noindent\n" ++ caption
-                 else "\\begin{quote}\n" ++ caption ++ "\n\\end{quote}"
-     return $
-       "\\begin{figure}" ++ place ++ anchor ++ "\n\\centering\n"
-       ++ art ++ "\n" ++ img ++ "\n" ++ title ++ "\n\\end{figure}"
+-- Convert the figure float
+----------------------------
+figure :: Environment -> (FigParts TexiFragment) -> LaTeX
+figure (_, d) parts =
+  let tr = trTexiFrag ("float", d)
+      (Fig place anchor art img caption captype) = fmap tr parts
+      title = if length caption < 69 || captype == Short
+              then "\\par\\bigskip\n\\noindent\n" ++ caption
+              else "\\begin{quote}\n" ++ caption ++ "\n\\end{quote}"
+  in "\\begin{figure}" ++ place ++ anchor ++ "\n\\centering\n"
+     ++ art ++ "\n" ++ img ++ "\n" ++ title ++ "\n\\end{figure}"
 
--- Search a fragment that satisfies a predicate
-------------------------------------------------
-seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
-seekTexi _ [] = Nothing
-seekTexi p (t:ts) = case seekFrag p t of
-                     Nothing -> seekTexi p ts
-                     result  -> result
-
-seekFrag :: (TexiFragment -> Bool) -> TexiFragment -> Maybe TexiFragment
-seekFrag p fr | p fr = Just fr
-seekFrag p (Braced _ texi) = seekTexi p texi
-seekFrag p (Line   _ texi) = seekTexi p texi
-seekFrag p (Env    _ texi) = seekTexi p texi
-seekFrag _ _ = Nothing
-
--- The predicates that match certain Texinfo fragments
--------------------------------------------------------
-isPlacement, isAnchor, isIfinfo, isIftex, isImage, isCaption, isShort ::
-  TexiFragment -> Bool
-isPlacement (Plain ('[':_)) = True
-isPlacement _ = False
-
-isAnchor (Braced "anchor" _) = True
-isAnchor _ = False
-
-isIfinfo (Env "ifinfo" _) = True
-isIfinfo _ = False
-
-isIftex (Env "iftex" _) = True
-isIftex _ = False
-
-isImage (Braced "image" _) = True
-isImage _ = False
-
-isCaption (Braced "caption" _) = True
-isCaption _ = False
-
-isShort (Single "short") = True
-isShort _ = False
-
--- Parse the components of an image
-------------------------------------
-data Image = Img File Width Height Alt Ext deriving Show
-
-type File = String
-type Width = String
-type Height = String
-type Alt = String
-type Ext = String
-
-image :: String -> LaTeX
-image arg = "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
-  where argParts = parse imageArg "image argument" arg
-        (Img file width height _ ext) = case argParts of
-          (Right img) -> img
-          (Left _)    -> Img "Wrong argument format." "" "" "" ""
-        filename = file ++ ext
+-- Convert image
+-----------------
+image :: ImgParts -> LaTeX
+image (Img file width height _ ext) =
+  "\\includegraphics[" ++ dimension ++ "]{" ++ filename ++ "}"
+  where filename = file ++ ext
         dimension = makeDim width height
         makeDim "" "" = ""
         makeDim "" h = "height=" ++ h
         makeDim w _ = "width=" ++ w
-
-imageArg :: Parser Image
-imageArg = Img <$>
-           (argPart <* comma) <*>
-           (argPart <* comma) <*>
-           (argPart <* comma) <*>
-           (altText <* comma) <*>
-           argPart
-
-argPart, altText :: Parser String
-argPart = spaces *> many (noneOf ", ") <* spaces
-altText = spaces *> many (noneOf ",")
-
-comma :: Parser Char
-comma = char ','
