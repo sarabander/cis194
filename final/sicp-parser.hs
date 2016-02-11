@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -Wall #-}
 
-{- Parser for a subset of Texinfo in sicp.texi
-   ===========================================
+{- Texinfo to LaTeX translator for a subset of Texinfo in sicp.texi
+   ================================================================
 
    Copyleft 2016 Andres Raba,
    GNU General Public License, version 3. -}
