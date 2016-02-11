@@ -309,13 +309,13 @@ mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
 
 lineSet :: S.Set Tag
-lineSet = S.fromList $ words "author bullet bye center chapter cindex dircategory endpage everyheading finalout heading include item node noindent printindex section setfilename setshortcontentsaftertitlepage settitle sp subsection subsubheading subsubsection subtitle title unnumbered"
+lineSet = S.fromList $ words "bullet bye center chapter endpage everyheading finalout include item node noindent printindex section sp subsection subsubheading subsubsection unnumbered"
 
 assignSet :: S.Set Tag
 assignSet = S.fromList $ words "set"
 
 commentSet :: S.Set Tag
-commentSet = S.fromList $ words "c comment"
+commentSet = S.fromList $ words "c comment author cindex dircategory heading setfilename settitle subtitle title setshortcontentsaftertitlepage vskip"
 
 envSet :: S.Set Tag
 envSet = S.fromList $ words "detailmenu direntry enumerate example ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
@@ -462,11 +462,35 @@ inlineMath context expr =
 
 line :: Environment -> Tag -> LaTeX -> LaTeX
 line (c,_) tag arg = case tag of
-  "endpage"  -> ""
-  "noindent" -> "\\noindent\n"
-  "sp"       -> if c == "iftex" then ""
-                else glue "vspace" (arg ++ "em") ++ "\n"
-  _          -> arg ++ "\n"
+  "bullet"        -> "\\bullet"
+  "center"        -> arg ++ "\n"
+  "item"          -> "\\item " ++ arg
+  "chapter"       -> glue tag arg ++ "\n"
+  "section"       -> glue tag arg ++ "\n"
+  "subsection"    -> glue tag arg ++ "\n"
+  "subsubsection" -> glue tag arg ++ "\n"
+  "subsubheading" -> glue "subsubsection*" arg ++ "\n"
+  "node"          -> node arg
+  "noindent"      -> "\\noindent\n"
+  "printindex"    -> "\\printindex\n"
+  "sp"            -> if c == "iftex" then ""
+                     else glue "vspace" (arg ++ "em") ++ "\n"
+  "unnumbered"    -> unnumbered "chapter" arg
+  _               -> ""
+
+node :: LaTeX -> LaTeX
+node title =
+  let beforeComma = head $ splitOn "," title
+  in case beforeComma of
+      [] -> ""
+      (t:_) -> "\\label{" ++
+               (if isDigit t then "Section " else "")
+               ++ beforeComma ++ "}\n"
+
+unnumbered :: String -> LaTeX -> LaTeX
+unnumbered titleType title =
+  glue (titleType ++ "*") title ++ "\n" ++
+  glue ("addcontentsline{toc}{" ++ titleType ++ "}") title ++ "\n"
 
 env :: Environment -> Tag -> LaTeX -> LaTeX
 env (c, _) tag arg = case tag of
