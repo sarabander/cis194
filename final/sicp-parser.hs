@@ -19,6 +19,7 @@ import Data.List.Split (splitOn)
 import Data.Maybe (isJust, isNothing)
 import Data.Char (isDigit)
 
+
 -- Texinfo data types
 ----------------------
 type Texinfo = [TexiFragment]
@@ -43,6 +44,7 @@ data TexiFragment = Comment Text
                   | Line Tag Texinfo
                   | Assign Variable Value
                   | Env Tag Texinfo
+                  | Enum Tag MarkType Texinfo
                   | Figure (FigParts TexiFragment)
                   | TeX Markup
                   deriving Show
@@ -54,6 +56,8 @@ type Width = String
 type Height = String
 type Alt = String
 type Ext = String
+
+data MarkType = Default | Mark TexiFragment deriving Show
 
 data FigParts a = Fig { figPlace   :: a
                       , figAnchor  :: a
@@ -116,7 +120,8 @@ argParser tag = case tagType tag of
   LineTag    -> Line    <$> pure tag <*> lineArg
   AssignTag  -> Assign  <$> variable <*> value
   CommentTag -> Comment <$> commentArg
-  EnvTag     -> Env     <$> pure tag <*> (manyTill texiFragment $ endTag tag)
+  EnvTag     -> Env     <$> pure tag <*> tillEnd tag
+  EnumTag    -> Enum    <$> pure tag <*> mark <*> tillEnd tag
   FigureTag  -> Figure  <$> figureArg tag
   TeXTag     -> TeX     <$>
                 (newline *> (manyTill anyChar $ endTag tag) <* newline)
@@ -131,6 +136,7 @@ data TagType = SingleTag
              | AssignTag
              | CommentTag
              | EnvTag
+             | EnumTag
              | FigureTag
              | TeXTag
              | UnknownTag
@@ -145,6 +151,7 @@ tagType tag | tag ∊ singleSet  = SingleTag
             | tag ∊ assignSet  = AssignTag
             | tag ∊ commentSet = CommentTag
             | tag ∊ envSet     = EnvTag
+            | tag ∊ enumSet    = EnumTag
             | tag ∊ figureSet  = FigureTag
             | tag ∊ texSet     = TeXTag
             | otherwise        = UnknownTag
@@ -215,10 +222,23 @@ vp `orMany` p = try vp <|> space *> {- spaces *> -} manyTill p newline
 -- vp is void-parser or empty-line parser, p should match something else
 infixl 3 `orMany`
 
--- Recognize the end of environment
-------------------------------------
+-- Parse till the end of environment (like @lisp .. @end lisp)
+---------------------------------------------------------------
+tillEnd :: Tag -> Parser Texinfo
+tillEnd tag = manyTill texiFragment $ endTag tag
+
 endTag :: Tag -> Parser EndTag
 endTag tag = try $ string "@end " <* spaces <* string tag {- <* emptyLine -}
+
+-- Parse the mark (like @bullet or number) of item list or enumeration
+-----------------------------------------------------------------------
+mark :: Parser MarkType
+mark = Mark <$> something <|> nothing *> pure Default where
+  something = try $ white *> (singl <|> plain) <* white <* newline
+  nothing   = white *> newline
+  white     = many (oneOf " \t")
+  singl     = try $ char '@' *> (Single <$> tagParser)
+  plain     = Plain <$> many1 (noneOf " \t\n")
 
 -- A parser for figure float innards
 -------------------------------------
@@ -294,7 +314,7 @@ singles :: String
 singles = "\"'*,-/@^`{|}"
 
 singleSet :: S.Set Tag
-singleSet = S.fromList $ map (:[]) singles ++ words "short thispage"
+singleSet = S.fromList $ map (:[]) singles ++ words "bullet item short thispage"
 
 noArgSet :: S.Set Tag
 noArgSet = S.fromList $ words "TeX copyright dots"
@@ -309,7 +329,7 @@ mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
 
 lineSet :: S.Set Tag
-lineSet = S.fromList $ words "bullet bye center chapter endpage everyheading finalout include item node noindent printindex section sp subsection subsubheading subsubsection unnumbered"
+lineSet = S.fromList $ words "bye center chapter endpage everyheading finalout include node noindent printindex section sp subsection subsubheading subsubsection unnumbered"
 
 assignSet :: S.Set Tag
 assignSet = S.fromList $ words "set"
@@ -318,7 +338,10 @@ commentSet :: S.Set Tag
 commentSet = S.fromList $ words "c comment author cindex dircategory heading setfilename settitle subtitle title setshortcontentsaftertitlepage vskip"
 
 envSet :: S.Set Tag
-envSet = S.fromList $ words "detailmenu direntry enumerate example ifinfo iftex itemize lisp macro menu quotation smallexample smalllisp titlepage"
+envSet = S.fromList $ words "detailmenu direntry example ifinfo iftex lisp macro menu quotation smallexample smalllisp titlepage"
+
+enumSet :: S.Set Tag
+enumSet = S.fromList $ words "enumerate itemize"
 
 figureSet :: S.Set Tag
 figureSet = S.fromList $ words "float"
@@ -393,6 +416,7 @@ trTexiFrag e fr = case fr of
   Line tag texi    -> line e tag $ trTexinfo (tag, snd e) texi
   Assign _ _       -> ""
   Env tag texi     -> env e tag $ trTexinfo (tag, snd e) texi
+  Enum tag mk texi -> enum tag mk texi
   Figure parts     -> figure e parts
   TeX markup       -> markup
 
@@ -409,9 +433,10 @@ single tag = case tag of
   "*"  -> "\\\\"
   "'"  -> "\\'"
   ","  -> "\\c"
+  "bullet"   -> "\\bullet"
+  "item"     -> "\\item"
+  "short"    -> ""
   "thispage" -> ""
-  --"short" -> "\\short"
-  "short" -> ""
   _ -> tag
 
 noArg :: Tag -> LaTeX
@@ -462,9 +487,7 @@ inlineMath context expr =
 
 line :: Environment -> Tag -> LaTeX -> LaTeX
 line (c,_) tag arg = case tag of
-  "bullet"        -> "\\bullet"
   "center"        -> arg ++ "\n"
-  "item"          -> "\\item " ++ arg
   "chapter"       -> glue tag arg ++ "\n"
   "section"       -> glue tag arg ++ "\n"
   "subsection"    -> glue tag arg ++ "\n"
@@ -509,6 +532,21 @@ env (c, _) tag arg = case tag of
 enclose :: String -> LaTeX -> LaTeX
 enclose envr inner =
   "\\begin{" ++ envr ++ "}" ++ inner ++ "\\end{" ++ envr ++ "}"
+
+-- Convert item lists and enumerations
+---------------------------------------
+enum :: Tag -> MarkType -> Texinfo -> LaTeX
+enum tag Default = enclose tag . ("\n" ++) . trTexinfo (tag, M.empty)
+enum tag (Mark fr) = enclose tag . (lbl ++) . concat . map suffix
+  where lbl = if tag == "enumerate" then mk fr ++ "\n" else "\n"
+        mk (Single "bullet") = "" -- ignore default item mark
+        mk (Plain "1") = "" -- ignore default enumeration start
+        mk frag = "[" ++ translate frag ++ "]"
+        translate = trTexiFrag (tag, M.empty)
+        suffix = \x ->
+          case (tag, x) of
+           ("itemize", Single "item") -> translate x ++ mk fr
+           (_, _)                     -> translate x
 
 -- Convert the figure float
 ----------------------------
