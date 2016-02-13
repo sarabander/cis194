@@ -579,7 +579,7 @@ enum tag (Mark fr) = enclose tag . (lbl ++) . concat . map suffix
 
 -- Convert the figure float
 ----------------------------
-figure :: Environment -> (FigParts TexiFragment) -> LaTeX
+figure :: Environment -> FigParts TexiFragment -> LaTeX
 figure (_, d) parts =
   let tr = trTexiFrag ("float", d)
       (Fig place anchor art img caption captype) = fmap tr parts
