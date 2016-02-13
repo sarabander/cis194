@@ -30,6 +30,7 @@ type Text = String
 type Symbol = String
 type ExcludedChars = String
 type Expression = String
+type Url = String
 type Markup = String
 type LaTeX = String
 
@@ -41,6 +42,7 @@ data TexiFragment = Comment Text
                   | Braced Tag Texinfo
                   | Image ImgParts
                   | Math Expression
+                  | Url (Url, Texinfo)
                   | Line Tag Texinfo
                   | Assign Variable Value
                   | Env Tag Texinfo
@@ -117,6 +119,7 @@ argParser tag = case tagType tag of
   BracedTag  -> Braced  <$> pure tag <*> bracedArg
   ImageTag   -> Image   <$> imageArg
   MathTag    -> Math    <$> mathArg "{}"
+  UrlTag     -> Url     <$> urlArg
   LineTag    -> Line    <$> pure tag <*> lineArg
   AssignTag  -> Assign  <$> variable <*> value
   CommentTag -> Comment <$> commentArg
@@ -132,6 +135,7 @@ data TagType = SingleTag
              | BracedTag
              | ImageTag
              | MathTag
+             | UrlTag
              | LineTag
              | AssignTag
              | CommentTag
@@ -147,6 +151,7 @@ tagType tag | tag ∊ singleSet  = SingleTag
             | tag ∊ bracedSet  = BracedTag
             | tag ∊ imageSet   = ImageTag
             | tag ∊ mathSet    = MathTag
+            | tag ∊ urlSet     = UrlTag
             | tag ∊ lineSet    = LineTag
             | tag ∊ assignSet  = AssignTag
             | tag ∊ commentSet = CommentTag
@@ -169,21 +174,32 @@ imageArg = char '{' *> argParts <* char '}'
 
 argParts :: Parser ImgParts
 argParts = Img <$>
-           (argPart <* comma) <*>
-           (argPart <* comma) <*>
-           (argPart <* comma) <*>
-           (altText <* comma) <*>
-           argPart
+           (white *> argPart <* comma) <*>
+           (argPart <* comma)          <*>
+           (argPart <* comma)          <*>
+           (altText <* comma)          <*>
+           argPart <* white
 
 argPart, altText :: Parser String
-argPart = spaces *> many (noneOf ", {}") <* spaces
-altText = spaces *> many (noneOf ",{}")
+argPart = many (noneOf ", {}")
+altText = many (noneOf ",{}")
+
+white :: Parser Text
+white = many (oneOf " \t")
 
 comma :: Parser Char
-comma = char ','
+comma = white *> char ',' <* white
 
 mathArg :: ExcludedChars -> Parser Text
 mathArg excl = char '{' *> simpleText excl <* char '}'
+
+urlArg :: Parser (Url, Texinfo)
+urlArg = do
+  _    <- char '{'
+  url  <- white *> many1 (noneOf " ,{}\t\n") <* white
+  texi <- option [(Plain url)] $ comma >> texinfo
+  _    <- char '}'
+  return (url, texi)
 
 -- Parsers for a single-line argument
 --------------------------------------
@@ -236,7 +252,6 @@ mark :: Parser MarkType
 mark = Mark <$> something <|> nothing *> pure Default where
   something = try $ white *> (singl <|> plain) <* white <* newline
   nothing   = white *> newline
-  white     = many (oneOf " \t")
   singl     = try $ char '@' *> (Single <$> tagParser)
   plain     = Plain <$> many1 (noneOf " \t\n")
 
@@ -320,13 +335,16 @@ noArgSet :: S.Set Tag
 noArgSet = S.fromList $ words "TeX copyright dots"
 
 bracedSet :: S.Set Tag
-bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i newterm r ref strong t titlefont url value var w"
+bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i newterm r ref strong t titlefont value var w"
 
 imageSet :: S.Set Tag
 imageSet = S.fromList $ words "image"
 
 mathSet :: S.Set Tag
 mathSet = S.fromList $ words "math"
+
+urlSet :: S.Set Tag
+urlSet = S.fromList $ words "url"
 
 lineSet :: S.Set Tag
 lineSet = S.fromList $ words "bye center chapter endpage everyheading finalout include node noindent printindex section sp subsection subsubheading subsubsection unnumbered"
@@ -413,6 +431,7 @@ trTexiFrag e fr = case fr of
   Braced tag texi  -> braced e tag $ trTexinfo (tag, snd e) texi
   Image parts      -> image parts
   Math expr        -> inlineMath (fst e) expr
+  Url pair         -> uri e pair
   Line tag texi    -> line e tag $ trTexinfo (tag, snd e) texi
   Assign _ _       -> ""
   Env tag texi     -> env e tag $ trTexinfo (tag, snd e) texi
@@ -484,6 +503,10 @@ inlineMath context expr =
    then "\\dark " else "") ++
   expr ++
   " \\)"
+
+uri :: Environment -> (Url, Texinfo) -> LaTeX
+uri (_, d) (url, texi) = "\\href{" ++ url ++ "}{" ++ name ++ "}"
+  where name = trTexinfo ("url", d) texi
 
 line :: Environment -> Tag -> LaTeX -> LaTeX
 line (c,_) tag arg = case tag of
