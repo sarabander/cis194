@@ -367,8 +367,11 @@ figureSet = S.fromList $ words "float"
 texSet :: S.Set Tag
 texSet = S.fromList $ words "tex"
 
--- MAIN --
-----------
+{----- END OF PARSING SECTION -----}
+
+
+-- MAIN: interact with the outside world
+-----------------------------------------
 main :: IO ()
 main = do
   commandArgs <- getArgs -- extract command line arguments to a list
@@ -396,6 +399,9 @@ translateFile inFile outFile = do
   --writeFile "parsetree.txt" $ show parseTree
   writeFile outFile translated  -- Latex
   --print $ M.toList dictionary
+
+
+{----- CONVERSION TO LATEX -----}
 
 -- For remembering the command inside which we are and the assigned variables
 ------------------------------------------------------------------------------
