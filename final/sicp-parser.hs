@@ -485,7 +485,7 @@ braced (c, d) tag arg = case tag of
   "titlefont" -> "% " ++ arg
   "var"       -> glue "var" $ (if c == "lisp" || c == "smalllisp"
                                then "\\dark " else "") ++ arg
-  "value"     -> maybe ("\\undefined_variable{" ++ arg ++ "}") id $
+  "value"     -> maybe (error $ "undefined variable: " ++ arg) id $
                  M.lookup arg d
   _           -> glue tag arg
 
