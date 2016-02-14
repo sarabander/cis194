@@ -13,7 +13,6 @@ import Text.Parsec hiding ((<|>), many)
 import Text.Parsec.String
 import Control.Applicative
 import qualified Data.Map as M
-import qualified Data.Set as S
 import System.Environment (getArgs)
 import Data.List.Split (splitOn)
 import Data.Maybe (isJust, isNothing)
@@ -25,6 +24,7 @@ import Data.Char (isDigit)
 type Texinfo = [TexiFragment]
 
 type Tag = String
+type Tags = String
 type EndTag = String
 type Text = String
 type Symbol = String
@@ -84,6 +84,9 @@ texiFragment = plainText <|> atClause <|> special
 
 -- Plaintext fragment that doesn't contain @-clauses or special symbols
 ------------------------------------------------------------------------
+specialSymbols :: String
+specialSymbols = "%$"
+
 plainText :: Parser TexiFragment
 plainText = Plain <$> simpleText ("@{}" ++ specialSymbols)
 
@@ -144,25 +147,10 @@ data TagType = SingleTag
              | FigureTag
              | TeXTag
              | UnknownTag
+             deriving Show
 
 tagType :: Tag -> TagType
-tagType tag | tag ∊ singleSet  = SingleTag
-            | tag ∊ noArgSet   = EmptyTag
-            | tag ∊ bracedSet  = BracedTag
-            | tag ∊ imageSet   = ImageTag
-            | tag ∊ mathSet    = MathTag
-            | tag ∊ urlSet     = UrlTag
-            | tag ∊ lineSet    = LineTag
-            | tag ∊ assignSet  = AssignTag
-            | tag ∊ commentSet = CommentTag
-            | tag ∊ envSet     = EnvTag
-            | tag ∊ enumSet    = EnumTag
-            | tag ∊ figureSet  = FigureTag
-            | tag ∊ texSet     = TeXTag
-            | otherwise        = UnknownTag
-
-(∊) :: Tag -> S.Set Tag -> Bool
-(∊) = S.member
+tagType tag = maybe UnknownTag id . M.lookup tag $ tagMap
 
 -- Parsers for an argument inside braces
 -----------------------------------------
@@ -322,50 +310,29 @@ isAssign _ = False
 
 -- Tags categorized by argument parsing style
 ----------------------------------------------
-specialSymbols :: String
-specialSymbols = "%$"
+tagMap :: M.Map Tag TagType
+tagMap = M.fromList . concat . map pairUp $ allTags
+  where pairUp (tagtype, tags) = (,) <$> words tags <*> [tagtype]
 
 singles :: String
 singles = "\"'*,-/@^`{|}"
 
-singleSet :: S.Set Tag
-singleSet = S.fromList $ map (:[]) singles ++ words "bullet item short thispage"
-
-noArgSet :: S.Set Tag
-noArgSet = S.fromList $ words "TeX copyright dots"
-
-bracedSet :: S.Set Tag
-bracedSet = S.fromList $ words "acronym anchor b caption cite code dfn emph file footnote i newterm r ref strong t titlefont value var w"
-
-imageSet :: S.Set Tag
-imageSet = S.fromList $ words "image"
-
-mathSet :: S.Set Tag
-mathSet = S.fromList $ words "math"
-
-urlSet :: S.Set Tag
-urlSet = S.fromList $ words "url"
-
-lineSet :: S.Set Tag
-lineSet = S.fromList $ words "bye center chapter endpage everyheading finalout include node noindent printindex section sp subsection subsubheading subsubsection unnumbered"
-
-assignSet :: S.Set Tag
-assignSet = S.fromList $ words "set"
-
-commentSet :: S.Set Tag
-commentSet = S.fromList $ words "c comment author cindex dircategory heading setfilename settitle subtitle title setshortcontentsaftertitlepage vskip"
-
-envSet :: S.Set Tag
-envSet = S.fromList $ words "detailmenu direntry example ifinfo iftex lisp macro menu quotation smallexample smalllisp titlepage"
-
-enumSet :: S.Set Tag
-enumSet = S.fromList $ words "enumerate itemize"
-
-figureSet :: S.Set Tag
-figureSet = S.fromList $ words "float"
-
-texSet :: S.Set Tag
-texSet = S.fromList $ words "tex"
+allTags :: [(TagType, Tags)]
+allTags =
+  [ (SingleTag, unwords (map (:[]) singles) ++ " bullet item short thispage")
+  , (EmptyTag, "TeX copyright dots")
+  , (BracedTag, "acronym anchor b caption cite code dfn emph file footnote i newterm r ref strong t titlefont value var w")
+  , (ImageTag, "image")
+  , (MathTag, "math")
+  , (UrlTag, "url")
+  , (LineTag, "bye center chapter endpage everyheading finalout include node noindent printindex section sp subsection subsubheading subsubsection unnumbered")
+  , (AssignTag, "set")
+  , (CommentTag, "c comment author cindex dircategory heading setfilename settitle subtitle title setshortcontentsaftertitlepage vskip")
+  , (EnvTag, "detailmenu direntry example ifinfo iftex lisp macro menu quotation smallexample smalllisp titlepage")
+  , (EnumTag, "enumerate itemize")
+  , (FigureTag, "float")
+  , (TeXTag, "tex")
+  ]
 
 {----- END OF PARSING SECTION -----}
 
