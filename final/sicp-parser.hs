@@ -355,15 +355,15 @@ main = do
 ----------------------------------------------------------------
 translateFile :: FilePath -> FilePath -> IO ()
 translateFile inFile outFile = do
-  parseTree <- parseFromFile texinfo inFile
+  parseHedge <- parseFromFile texinfo inFile
   let toPair = \(Assign var val) -> (var, val)
   let dictionary = either (const M.empty) id $
                    fmap (M.fromList . map toPair . filter isAssign) $
-                   parseTree
+                   parseHedge
   let translated = either show id $
                    fmap (trTexinfo ("global", dictionary)) $
-                   parseTree
-  --writeFile "parsetree.txt" $ show parseTree
+                   parseHedge
+  --writeFile "parsehedge.txt" $ show parseHedge
   writeFile outFile translated  -- Latex
   --print $ M.toList dictionary
 
