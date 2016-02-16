@@ -17,7 +17,7 @@ import System.Environment (getArgs)
 import Data.List.Split (splitOn)
 import Data.Maybe (isJust, isNothing)
 import Data.Char (isDigit)
-
+import Data.List (intercalate)
 
 -- Texinfo data types
 ----------------------
@@ -364,8 +364,35 @@ translateFile inFile outFile = do
                    fmap (trTexinfo ("global", dictionary)) $
                    parseHedge
   --writeFile "parsehedge.txt" $ show parseHedge
+  --writeFile "parsehedge.txt" $ either show id $
+  --  prettyHedge 0 <$> parseHedge
   writeFile outFile translated  -- Latex
   --print $ M.toList dictionary
+
+-- Pretty-printer for the parse hedge
+--------------------------------------
+right :: Int
+right = 2  -- rightwards indentation step
+
+prettyHedge :: Int -> Texinfo -> String
+prettyHedge indent = concat . map (prettyTree indent)
+
+prettyTree :: Int -> TexiFragment -> String
+prettyTree indent (Enum tag mktype texi) =
+  replicate indent ' ' ++ "Enum " ++ show tag ++ " " ++
+  show mktype ++ "\n" ++ prettyHedge (indent + right) texi
+prettyTree indent (Figure (Fig place anchor art img caption captype)) =
+  replicate indent ' ' ++ "Figure (Fig\n" ++
+  ((++ "\n" ++ pretty captype ++ ")\n") . intercalate "\n" . map pretty)
+  [place, anchor, art, img, caption] where
+    pretty field = replicate (indent + right) ' ' ++ show field
+prettyTree indent tree = case tree of
+  (Braced tag texi) -> pretty "Braced " tag texi
+  (Line   tag texi) -> pretty "Line "   tag texi
+  (Env    tag texi) -> pretty "Env "    tag texi
+  other             -> replicate indent ' ' ++ show other ++ "\n"
+  where pretty cons tag texi = replicate indent ' ' ++ cons ++ show tag ++
+                               "\n" ++ prettyHedge (indent + right) texi
 
 
 {----- CONVERSION TO LATEX -----}
