@@ -540,17 +540,16 @@ unnumbered titleType title =
 
 env :: Environment -> Tag -> LaTeX -> LaTeX
 env (c, _) tag arg = case tag of
+  "detailmenu"   -> ""
   "example"      -> enclose "example" arg
-  "smallexample" -> enclose "smallexample" arg
-  "ifinfo"       -> enclose "comment" arg
-  "macro"        -> enclose "comment" arg
-  "titlepage"    -> enclose "comment" arg
-  "quotation"    -> enclose "quote" arg
   "lisp"         -> if c == "footnote"
                     then enclose "smallscheme" arg
                     else enclose "scheme" arg
+  "menu"         -> ""
+  "quotation"    -> enclose "quote" arg
+  "smallexample" -> enclose "smallexample" arg
   "smalllisp"    -> enclose "smallscheme" arg
-  _ -> arg
+  _              -> enclose "comment" arg
 
 enclose :: String -> LaTeX -> LaTeX
 enclose envr inner =
