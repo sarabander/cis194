@@ -355,6 +355,7 @@ main = do
 ----------------------------------------------------------------
 translateFile :: FilePath -> FilePath -> IO ()
 translateFile inFile outFile = do
+  putStrLn $ "Translating " ++ inFile ++ " to LaTeX..."
   parseHedge <- parseFromFile texinfo inFile
   let toPair = \(Assign var val) -> (var, val)
   let dictionary = either (const M.empty) id $
@@ -363,11 +364,12 @@ translateFile inFile outFile = do
   let translated = either show id $
                    fmap (trTexinfo ("global", dictionary)) $
                    parseHedge
-  --writeFile "parsehedge.txt" $ show parseHedge
   --writeFile "parsehedge.txt" $ either show id $
   --  prettyHedge 0 <$> parseHedge
-  writeFile outFile translated  -- Latex
-  --print $ M.toList dictionary
+  preamble  <- readFile "preamble.tex"
+  postamble <- readFile "postamble.tex"
+  writeFile outFile $ preamble ++ translated ++ postamble
+  putStrLn "Done."
 
 -- Pretty-printer for the parse hedge
 --------------------------------------
