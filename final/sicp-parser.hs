@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wall #-}
+{-# LANGUAGE QuasiQuotes, FlexibleContexts #-}
 
 {- Texinfo to LaTeX translator for a subset of Texinfo in sicp.texi
    ================================================================
@@ -18,6 +19,7 @@ import Data.List.Split (splitOn)
 import Data.Maybe (isJust, isNothing)
 import Data.Char (isDigit)
 import Data.List (intercalate)
+import Text.Regex.PCRE.Heavy (Regex, re, gsub)
 
 -- Texinfo data types
 ----------------------
@@ -470,6 +472,7 @@ braced (c, d) tag arg = case tag of
   "b"         -> glue "textbf" arg
   "caption"   -> arg
   "cite"      -> glue "textit" arg
+  "code"      -> glue tag $ gsub dash "\\-/" arg -- assist line break
   "file"      -> glue "texttt" arg
   "i"         -> glue "textit" arg
   "r"         -> glue "textrm" arg
@@ -484,6 +487,9 @@ braced (c, d) tag arg = case tag of
   "value"     -> maybe (error $ "undefined variable: " ++ arg) id $
                  M.lookup arg d
   _           -> glue tag arg
+
+dash :: Regex
+dash = [re|(?<=\w)-(?=\w)|]
 
 phantom :: Context -> LaTeX
 phantom "float"  = "\\phantomsection"
