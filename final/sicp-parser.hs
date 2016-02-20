@@ -266,8 +266,8 @@ figureArg tag = do
    Just parts -> return parts
    Nothing -> parserFail "Figure float components are faulty or missing!"
 
--- Search a fragment that satisfies a predicate
-------------------------------------------------
+-- Search a fragment that satisfies a predicate (depth first search)
+---------------------------------------------------------------------
 seekTexi :: (TexiFragment -> Bool) -> Texinfo -> Maybe TexiFragment
 seekTexi _ [] = Nothing
 seekTexi p (t:ts) = case seekFrag p t of
@@ -373,8 +373,8 @@ translateFile inFile outFile = do
   writeFile outFile $ preamble ++ translated ++ postamble
   putStrLn "Done."
 
--- Pretty-printer for the parse hedge
---------------------------------------
+-- Pretty-printer for the parse hedge (whose code is not so pretty)
+--------------------------------------------------------------------
 right :: Int
 right = 2  -- rightwards indentation step
 
