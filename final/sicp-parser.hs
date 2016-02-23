@@ -363,7 +363,7 @@ translateFile inFile outFile = do
   let dictionary = either (const M.empty) id $
                    fmap (M.fromList . map toPair . filter isAssign) $
                    parseHedge
-  let translated = either show id $
+  let translated = either (error . show) id $
                    fmap (trTexinfo ("global", dictionary)) $
                    parseHedge
   --writeFile "parsehedge.txt" $ either show id $
